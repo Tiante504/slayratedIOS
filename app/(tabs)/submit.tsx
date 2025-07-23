@@ -1,6 +1,8 @@
 // app/(tabs)/submit.tsx
+import { db } from '@/firebase/firebaseConfig';
 import { Picker } from '@react-native-picker/picker';
 import * as ImagePicker from 'expo-image-picker';
+import { addDoc, collection } from 'firebase/firestore';
 import React, { useState } from 'react';
 import {
   Alert,
@@ -41,7 +43,7 @@ export default function SubmitReviewScreen() {
     }
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!businessName || !caption || !image || !serviceType || rating === 0 || !cityState) {
       Alert.alert('Please fill in all fields and upload an image.');
       return;
@@ -50,7 +52,30 @@ export default function SubmitReviewScreen() {
     Alert.alert(`Review for ${businessName} submitted!`);
     // Save data to backend later
 
-    
+    try {
+      await addDoc(collection(db, 'reviews'), {
+        businessName,
+        cityState,
+        caption,
+        image,
+        serviceType,
+        rating: Number(rating),
+        createdAt: new Date().toISOString(),
+      });
+
+      Alert.alert('✅ Review submitted!');
+
+      // Clear form
+      setBusinessName('');
+      setCityState('');
+      setImage(null);
+      setServiceType('');
+      setCaption('');
+      setRating('');
+    } catch (error) {
+      console.error('Firebase submission error:', error);
+      Alert.alert('❌ Submission failed.');
+    }
   };
 
   return (
