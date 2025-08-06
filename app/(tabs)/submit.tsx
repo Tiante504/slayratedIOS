@@ -51,6 +51,9 @@ export default function SubmitReviewScreen() {
 
     Alert.alert(`Review for ${businessName} submitted!`);
     // Save data to backend later
+    // todo
+    /// save image to firebase storage 
+    // fetch the url of firebase storage and  store it firestore
 
     try {
       await addDoc(collection(db, 'reviews'), {
