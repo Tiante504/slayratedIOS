@@ -1,5 +1,6 @@
 import { useRouter } from 'expo-router';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
+import { doc, setDoc } from 'firebase/firestore';
 import React, { useState } from 'react';
 import {
   Alert,
@@ -11,24 +12,36 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { auth } from '../firebase/firebaseConfig';
 
+import { auth, db } from '../firebase/firebaseConfig';
 
-const backgroundImage = require('../assets/images/signuppic.png'); // path to your updated image
+const backgroundImage = require('../assets/images/signuppic.png');
 
 export default function SignUpScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [username, setUsername] = useState('');
   const router = useRouter();
 
-  const handlePlaceholderSignUp = async () => {
-    //Alert.alert('Coming Soon', 'Sign-up functionality will be available soon!');
+  const handleSignUp = async () => {
+    if (!email || !password || !username) {
+      Alert.alert('Missing Info', 'Please enter email, password, and username.');
+      return;
+    }
+
     try {
-      await createUserWithEmailAndPassword(auth, email, password);
-      Alert.alert('Success', 'User signed up successfully!');
-      router.replace('/(tabs)/home')
-    } catch (error) {
-      Alert.alert('Error', error.message);
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const user = userCredential.user;
+
+      await setDoc(doc(db, 'users', user.uid), {
+        email,
+        username,
+        createdAt: new Date(),
+      });
+
+      router.replace('/setup-profile');
+    } catch (error: any) {
+      Alert.alert('Sign-Up Error', error.message);
     }
   };
 
@@ -54,13 +67,17 @@ export default function SignUpScreen() {
           onChangeText={setPassword}
         />
 
-        <TouchableOpacity
-          style={styles.buttonPrimary}
-          onPress={handlePlaceholderSignUp}
-        >
+        <TextInput
+          style={styles.input}
+          placeholder="Preferred Username"
+          placeholderTextColor="#ccc"
+          value={username}
+          onChangeText={setUsername}
+        />
+
+        <TouchableOpacity style={styles.buttonPrimary} onPress={handleSignUp}>
           <Text style={styles.buttonText}>Sign Up</Text>
         </TouchableOpacity>
-
 
         <TouchableOpacity onPress={() => router.push('/login')}>
           <Text style={styles.link}>Already have an account? Log In</Text>
@@ -160,5 +177,6 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
 });
+
 
 

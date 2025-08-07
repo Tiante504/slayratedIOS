@@ -1,8 +1,9 @@
-// app/(tabs)/submit.tsx
-import { db } from '@/firebase/firebaseConfig';
+// ✅ Full Updated submit.tsx
+import { auth, db, storage } from '@/firebase/firebaseConfig';
 import { Picker } from '@react-native-picker/picker';
 import * as ImagePicker from 'expo-image-picker';
-import { addDoc, collection } from 'firebase/firestore';
+import { addDoc, collection, doc, getDoc } from 'firebase/firestore';
+import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import React, { useState } from 'react';
 import {
   Alert,
@@ -20,61 +21,100 @@ export default function SubmitReviewScreen() {
   const [businessName, setBusinessName] = useState('');
   const [cityState, setCityState] = useState('');
   const [caption, setCaption] = useState('');
-  const [image, setImage] = useState<string | null>(null);
+  const [mediaAssets, setMediaAssets] = useState<any[]>([]);
   const [serviceType, setServiceType] = useState('');
-  const [rating, setRating] = useState(0);
+  const [rating, setRating] = useState(1);
 
   const pickImage = async () => {
     const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-
     if (!permissionResult.granted) {
-      Alert.alert('Permission to access camera roll is required!');
+      Alert.alert('Permission to access media is required!');
       return;
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.All,
-      allowsEditing: true,
+      allowsMultipleSelection: true,
       quality: 1,
+      videoExportPreset: ImagePicker.VideoExportPreset.MediumQuality,
+      selectionLimit: 5,
     });
 
-    if (!result.canceled && result.assets.length > 0) {
-      setImage(result.assets[0].uri);
+    if (!result.canceled && result.assets?.length > 0) {
+      const newMedia: any[] = [];
+      for (const asset of result.assets) {
+        if (asset.type === 'video' && asset.duration > 120) {
+          Alert.alert('Each video must be under 2 minutes.');
+          continue;
+        }
+        if (asset.type === 'image' && newMedia.filter(item => item.type === 'image').length >= 5) {
+          Alert.alert('Limit of 5 photos per review.');
+          continue;
+        }
+        newMedia.push(asset);
+      }
+      setMediaAssets(prev => [...prev, ...newMedia]);
     }
   };
 
   const handleSubmit = async () => {
-    if (!businessName || !caption || !image || !serviceType || rating === 0 || !cityState) {
-      Alert.alert('Please fill in all fields and upload an image.');
+    if (!businessName || !caption || mediaAssets.length === 0 || !serviceType || !cityState) {
+      Alert.alert('Please fill in all fields and upload media.');
       return;
     }
 
-    Alert.alert(`Review for ${businessName} submitted!`);
-    // Save data to backend later
-    // todo
-    /// save image to firebase storage 
-    // fetch the url of firebase storage and  store it firestore
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      Alert.alert('You must be logged in to post a review.');
+      return;
+    }
+
+    const userId = currentUser.uid;
+    let username = 'anonymous';
 
     try {
+      const userDoc = await getDoc(doc(db, 'users', userId));
+      if (userDoc.exists()) {
+        username = userDoc.data().username;
+      }
+    } catch (error) {
+      console.warn('Could not fetch username:', error);
+    }
+
+    try {
+      const uploadedMedia = [];
+      for (const asset of mediaAssets) {
+        const response = await fetch(asset.uri);
+        const blob = await response.blob();
+        const ext = asset.type === 'video' ? 'mp4' : 'jpg';
+        const fileName = `${userId}_${Date.now()}_${Math.random().toString(36).substring(7)}.${ext}`;
+        const storageRef = ref(storage, `reviewMedia/${fileName}`);
+
+        await uploadBytes(storageRef, blob);
+        const downloadURL = await getDownloadURL(storageRef);
+
+        uploadedMedia.push({ url: downloadURL, type: asset.type });
+      }
+
       await addDoc(collection(db, 'reviews'), {
+        userId,
+        username,
         businessName,
         cityState,
         caption,
-        image,
+        media: uploadedMedia,
         serviceType,
         rating: Number(rating),
         createdAt: new Date().toISOString(),
       });
 
       Alert.alert('✅ Review submitted!');
-
-      // Clear form
       setBusinessName('');
       setCityState('');
-      setImage(null);
+      setMediaAssets([]);
       setServiceType('');
       setCaption('');
-      setRating('');
+      setRating(1);
     } catch (error) {
       console.error('Firebase submission error:', error);
       Alert.alert('❌ Submission failed.');
@@ -101,12 +141,9 @@ export default function SubmitReviewScreen() {
         onChangeText={setCityState}
       />
 
-
-      {/* Service Type Dropdown */}
       <View style={styles.inputGroup}>
         <Text style={styles.label}>Service Type</Text>
         <View style={styles.pickerWrapper}>
-
           <Picker
             selectedValue={serviceType}
             onValueChange={(itemValue) => setServiceType(itemValue)}
@@ -122,7 +159,6 @@ export default function SubmitReviewScreen() {
         </View>
       </View>
 
-      {/* Star Rating */}
       <View style={styles.inputGroup}>
         <Text style={styles.label}>Your Rating</Text>
         <View style={styles.starsRow}>
@@ -145,10 +181,16 @@ export default function SubmitReviewScreen() {
       />
 
       <TouchableOpacity onPress={pickImage} style={styles.imageButton}>
-        <Text style={styles.imageButtonText}>📸 Upload Photo</Text>
+        <Text style={styles.imageButtonText}>📸 Upload Photo or Video</Text>
       </TouchableOpacity>
 
-      {image && <Image source={{ uri: image }} style={styles.previewImage} />}
+      {mediaAssets.map((asset, index) => (
+        <Image
+          key={index}
+          source={{ uri: asset.uri }}
+          style={styles.previewImage}
+        />
+      ))}
 
       <TouchableOpacity style={styles.submitButton} onPress={handleSubmit}>
         <Text style={styles.submitButtonText}>Submit Review</Text>
@@ -201,12 +243,6 @@ const styles = StyleSheet.create({
     borderColor: '#e6007e',
     overflow: 'hidden',
   },
-  picker: {
-    height: 50,
-    width: '100%',
-    color: '#000',
-    paddingHorizontal: 12,
-  },
   starsRow: {
     flexDirection: 'row',
     justifyContent: 'flex-start',
@@ -250,9 +286,4 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
 });
-
-
-
-
-
 
