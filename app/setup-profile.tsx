@@ -1,4 +1,6 @@
-// ✅ setup-profile.tsx
+// ✅ setup-profile.tsx - used for initial profile setup
+// This screen allows users to set up their profile by uploading a profile picture and writing a bio
+// It is used when a user first signs up and needs to complete their profile setup
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import { getAuth } from 'firebase/auth';
