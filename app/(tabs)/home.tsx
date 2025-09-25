@@ -1,277 +1,401 @@
 // app/(tabs)/home.tsx
-
 import { useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Dimensions,
+  FlatList,
   Image,
-  ScrollView,
+  Pressable,
+  SafeAreaView,
+  Share,
+  StatusBar,
   StyleSheet,
   Text,
-  TouchableOpacity,
   View,
 } from 'react-native';
 
-import { db } from '@/firebase/firebaseConfig';
-import { Review } from '@/types/post';
+import { db, storage } from '@/firebase/firebaseConfig';
+import { Feather, Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import { Video } from 'expo-video';
 import { getAuth } from 'firebase/auth';
-import { collection, doc, getDoc, getDocs, orderBy, query } from 'firebase/firestore';
+import {
+  collection,
+  getDocs,
+  limit,
+  onSnapshot,
+  orderBy,
+  query,
+  Timestamp,
+} from 'firebase/firestore';
+import { getDownloadURL, ref as storageRef } from 'firebase/storage';
 
 const screenWidth = Dimensions.get('window').width;
 
-function formatTimeAgo(date: Date) {
-  const now = new Date();
-  const seconds = Math.floor((now.getTime() - date.getTime()) / 1000);
-  const intervals = [
-    { label: 'year', seconds: 31536000 },
-    { label: 'month', seconds: 2592000 },
-    { label: 'week', seconds: 604800 },
-    { label: 'day', seconds: 86400 },
-    { label: 'hour', seconds: 3600 },
-    { label: 'minute', seconds: 60 },
-    { label: 'second', seconds: 1 },
-  ];
-
-  for (const i of intervals) {
-    const count = Math.floor(seconds / i.seconds);
-    if (count >= 1) {
-      return `${count} ${i.label}${count > 1 ? 's' : ''} ago`;
-    }
+function formatTimeAgoMs(ms: number | undefined) {
+  if (!ms) return 'Just now';
+  const now = Date.now();
+  const seconds = Math.floor((now - ms) / 1000);
+  const steps = [
+    ['year', 31536000],
+    ['month', 2592000],
+    ['week', 604800],
+    ['day', 86400],
+    ['hour', 3600],
+    ['minute', 60],
+    ['second', 1],
+  ] as const;
+  for (const [label, s] of steps) {
+    const count = Math.floor(seconds / s);
+    if (count >= 1) return `${count} ${label}${count > 1 ? 's' : ''} ago`;
   }
-
   return 'Just now';
+}
+
+type Review = {
+  id: string;
+  username: string;
+  avatarUrl?: string;
+  rating: number;
+  caption?: string;
+  serviceType?: string;
+  media?: Array<{ type: 'image' | 'video'; url: string }>;
+  likes?: number;
+  comments?: number;
+  likedByMe?: boolean;
+  createdAtMs?: number;
+};
+
+async function ensureUrl(pathOrUrl?: string): Promise<string | undefined> {
+  if (!pathOrUrl) return undefined;
+  if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
+  try {
+    return await getDownloadURL(storageRef(storage, pathOrUrl));
+  } catch (e) {
+    console.log('getDownloadURL failed for', pathOrUrl, e);
+    return undefined;
+  }
+}
+
+async function normalizeDoc(id: string, data: any): Promise<Review> {
+  const createdAtMs =
+    data?.createdAt instanceof Timestamp
+      ? data.createdAt.toMillis()
+      : typeof data?.createdAt === 'number'
+        ? data.createdAt
+        : undefined;
+  const avatarUrl =
+    (await ensureUrl(data?.avatarUrl)) ?? (await ensureUrl(data?.avatarPath));
+  const media: Review['media'] = Array.isArray(data?.media)
+    ? await Promise.all(
+      data.media.map(async (m: any) => ({
+        type: m?.type === 'video' ? 'video' : 'image',
+        url: (await ensureUrl(m?.url ?? m?.path)) ?? '',
+      }))
+    )
+    : undefined;
+  return {
+    id,
+    username: data?.username ?? data?.handle ?? 'user',
+    avatarUrl,
+    rating: typeof data?.rating === 'number' ? data.rating : 0,
+    caption: data?.caption ?? data?.text ?? '',
+    serviceType: data?.serviceType,
+    media,
+    likes: data?.likes ?? 0,
+    comments: data?.comments ?? 0,
+    likedByMe: !!data?.likedByMe,
+    createdAtMs,
+  };
 }
 
 export default function HomeScreen() {
   const router = useRouter();
-  const [reviews, setReviews] = useState<Review[] | null>(null);
+  const [reviews, setReviews] = useState<Review[]>([]);
   const [currentUsername, setCurrentUsername] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    fetchReviews();
-    fetchCurrentUser();
-
-    const interval = setInterval(() => {
-      fetchReviews();
-    }, 3000);
-
-    return () => clearInterval(interval);
+  const fetchOnce = useCallback(async () => {
+    try {
+      const q = query(
+        collection(db, 'reviews'),
+        orderBy('createdAt', 'desc'),
+        limit(50)
+      );
+      const snap = await getDocs(q);
+      const rows = await Promise.all(
+        snap.docs.map((d) => normalizeDoc(d.id, d.data()))
+      );
+      setReviews(rows);
+    } catch (e) {
+      console.log('fetchOnce error:', e);
+    }
   }, []);
 
-  // ✅ Fetch reviews from Firestore
-  async function fetchReviews() {
-    try {
-      const reviewsQuery = query(
-        collection(db, 'reviews'),
-        orderBy('createdAt', 'desc')
-      );
-      const reviewsSnapshot = await getDocs(reviewsQuery);
-      const allReviews = reviewsSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-      })) as Review[];
-      setReviews(allReviews);
-    } catch (error) {
-      console.error('Error fetching reviews:', error);
-      Alert.alert('Error fetching reviews');
-    }
-  }
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await fetchOnce();
+    setRefreshing(false);
+  }, [fetchOnce]);
 
-  // ✅ Fetch the logged-in user's username
-  async function fetchCurrentUser() {
-    try {
-      const auth = getAuth();
-      const user = auth.currentUser;
-      if (!user) return;
-
-      const userDoc = await getDoc(doc(db, 'users', user.uid));
-      if (userDoc.exists()) {
-        setCurrentUsername(userDoc.data().username);
+  useEffect(() => {
+    (async () => {
+      try {
+        const auth = getAuth();
+        setCurrentUsername(auth.currentUser?.displayName ?? null);
+      } catch (e) {
+        console.log('Fetch current user error:', e);
       }
-    } catch (error) {
-      console.error('Error fetching current user:', error);
+    })();
+  }, []);
+
+  useEffect(() => {
+    try {
+      const q = query(
+        collection(db, 'reviews'),
+        orderBy('createdAt', 'desc'),
+        limit(50)
+      );
+      const unsub = onSnapshot(q, async (snap) => {
+        try {
+          const rows = await Promise.all(
+            snap.docs.map((d) => normalizeDoc(d.id, d.data()))
+          );
+          setReviews(rows);
+        } catch (e) {
+          console.log('Normalize error:', e);
+        }
+      });
+      return () => unsub();
+    } catch (e) {
+      console.log('onSnapshot error:', e);
     }
-  }
+  }, []);
+
+  const renderItem = useCallback(
+    ({ item }: { item: Review }) => (
+      <ReviewCard item={item} router={router} currentUsername={currentUsername} />
+    ),
+    [router, currentUsername]
+  );
 
   return (
-    <ScrollView style={styles.container}>
-      {/* Logo + Welcome Text */}
-      <View style={styles.header}>
-        <Image
-          source={require('../../assets/images/slayratedwelcome1.png')}
-          style={styles.logo}
-          resizeMode="contain"
-        />
-        <Text style={styles.welcome}>Welcome back, @{currentUsername || 'slayqueen'}</Text>
+    <SafeAreaView style={styles.safe}>
+      <StatusBar barStyle="dark-content" />
+      <View style={styles.topBar}>
+        <Pressable hitSlop={8}>
+          <Feather name="menu" size={22} />
+        </Pressable>
+        <Text style={styles.brand}>SLAY RATED</Text>
+        <Pressable hitSlop={8}>
+          <Feather name="search" size={22} />
+        </Pressable>
       </View>
+      <View style={styles.header}>
+        <Text style={styles.welcome}>
+          Welcome back, @{currentUsername || 'slayqueen'}
+        </Text>
+      </View>
+      <FlatList
+        data={reviews}
+        keyExtractor={(it) => it.id}
+        renderItem={renderItem}
+        contentContainerStyle={styles.listContent}
+        showsVerticalScrollIndicator={false}
+        refreshing={refreshing}
+        onRefresh={onRefresh}
+      />
+    </SafeAreaView>
+  );
+}
 
-      {/* Reviews */}
-      {reviews && reviews.map((review) => (
-        <View key={review.id} style={styles.postCard}>
-          <View style={styles.userRow}>
-            {review.avatar && <Image source={review.avatar} style={styles.avatar} />}
-            <View>
-              <TouchableOpacity
-                onPress={() => {
-                  if (review.username === currentUsername) {
-                    router.navigate('/(tabs)/profile');
-                  } else {
-                    router.push(`/profile/${review.username}`);
-                  }
+function Stars({ value }: { value: number }) {
+  return (
+    <View style={{ flexDirection: 'row' }}>
+      {Array.from({ length: 5 }).map((_, i) => (
+        <Ionicons
+          key={i}
+          name={i < value ? 'star' : 'star-outline'}
+          size={16}
+          style={{ marginRight: 2 }}
+        />
+      ))}
+    </View>
+  );
+}
 
-                }}
-              >
-                <Text style={styles.username}>@{review.username}</Text>
-              </TouchableOpacity>
-              <Text style={styles.meta}>
-                {review.createdAt ? formatTimeAgo(new Date(review.createdAt)) : 'Just now'} • <Text style={styles.tag}>{review.serviceType}</Text>
-              </Text>
-            </View>
-          </View>
+function ReviewCard({
+  item,
+  router,
+  currentUsername,
+}: {
+  item: Review;
+  router: any;
+  currentUsername: string | null;
+}) {
+  const [liked, setLiked] = useState<boolean>(!!item.likedByMe);
+  const [likes, setLikes] = useState<number>(item.likes ?? 0);
 
-          {/* Media content */}
-          {Array.isArray(review.media) && review.media.map((item, index) => {
-            if (item.type === 'image') {
-              return (
-                <Image
-                  key={index}
-                  source={{ uri: item.url }}
-                  style={styles.postImage}
-                  resizeMode="cover"
-                />
-              );
-            } else if (item.type === 'video') {
-              return (
-                <Video
-                  key={index}
-                  source={{ uri: item.url }}
-                  style={styles.postVideo}
-                  useNativeControls
-                  resizeMode="resizeMode.COVER"
-                  shouldPlay={false}
-                />
-              );
-            }
-            return null;
-          })}
+  const timeAgo = useMemo(
+    () => formatTimeAgoMs(item.createdAtMs),
+    [item.createdAtMs]
+  );
 
-          {review.image && (
+  const handleLike = async () => {
+    setLiked((v) => !v);
+    setLikes((n) => (liked ? Math.max(0, n - 1) : n + 1));
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => { });
+  };
+
+  const handleComment = () => {
+    Alert.alert('Comments', 'Open comments thread here.');
+  };
+
+  const handleShare = async () => {
+    try {
+      await Share.share({
+        message: `${item.username} on Slay Rated: ${item.caption ?? ''}`,
+        url: item.media && item.media[0]?.url,
+        title: 'Slay Rated Review',
+      });
+    } catch (e) {
+      console.log('Share cancelled or failed', e);
+    }
+  };
+
+  return (
+    <View style={styles.card}>
+      <View style={styles.cardHeader}>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          {item.avatarUrl ? (
             <Image
-              source={review.image}
-              style={styles.postImage}
+              source={{ uri: item.avatarUrl }}
+              style={styles.avatar}
               resizeMode="cover"
             />
+          ) : (
+            <View style={[styles.avatar, { backgroundColor: '#eee' }]} />
           )}
-
-          <Text style={styles.caption}>{review.caption}</Text>
-
-          <View style={styles.starsRow}>
-            {Array.from({ length: review.rating }).map((_, index) => (
-              <Text key={index} style={styles.star}>⭐</Text>
-            ))}
-          </View>
-
-          <View style={styles.actionsRow}>
-            <Text style={styles.action}>💖 {review.likes}</Text>
-            <Text style={styles.action}>💬 {review.comments}</Text>
+          <View>
+            <Pressable
+              onPress={() => {
+                const clean = (u?: string | null) => (u ?? '').replace(/^@/, '').trim();
+                const me = clean(currentUsername);
+                const them = clean(item.username);
+                if (me && me === them) {
+                  router.navigate('/(tabs)/profile');
+                } else {
+                  router.push(`/profile/${them}`);
+                }
+              }}
+            >
+              <Text style={styles.username}>
+                @{(item.username || '').replace(/^@/, '')}
+              </Text>
+            </Pressable>
+            <Stars value={item.rating} />
           </View>
         </View>
-      ))}
-    </ScrollView>
+        <Text style={styles.timestamp}>
+          {timeAgo} {item.serviceType ? '• ' : ''}{' '}
+          <Text style={styles.tag}>{item.serviceType}</Text>
+        </Text>
+      </View>
+      {Array.isArray(item.media) &&
+        item.media.map((m, idx) =>
+          m.type === 'video' ? (
+            <Video
+              key={idx}
+              source={{ uri: m.url }}
+              style={styles.postVideo}
+              resizeMode="cover"
+              useNativeControls
+              shouldPlay={false}
+            />
+          ) : (
+            <Image
+              key={idx}
+              source={{ uri: m.url }}
+              style={styles.media}
+              resizeMode="cover"
+            />
+          )
+        )}
+      {!!item.caption && <Text style={styles.bodyText}>{item.caption}</Text>}
+      <View style={styles.actionBar}>
+        <Pressable style={styles.actionBtn} onPress={handleLike}>
+          <Ionicons name={liked ? 'heart' : 'heart-outline'} size={20} />
+          <Text style={styles.actionLabel}>{likes}</Text>
+        </Pressable>
+        <Pressable style={styles.actionBtn} onPress={handleComment}>
+          <Ionicons name="chatbubble-ellipses-outline" size={20} />
+          <Text style={styles.actionLabel}>{item.comments ?? 0}</Text>
+        </Pressable>
+        <Pressable style={styles.actionBtn} onPress={handleShare}>
+          <Ionicons name="share-outline" size={20} />
+          <Text style={styles.actionLabel}>Share</Text>
+        </Pressable>
+      </View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    backgroundColor: '#fff',
-    paddingTop: 10,
+  safe: { flex: 1, backgroundColor: '#fff' },
+  topBar: {
+    height: 52,
     paddingHorizontal: 16,
-  },
-  header: {
+    flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 20,
+    justifyContent: 'space-between',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#eee',
   },
-  logo: {
-    width: screenWidth * 0.6,
-    height: 60,
-  },
-  welcome: {
-    fontSize: 18,
-    fontWeight: '600',
-    marginTop: 10,
-    color: '#333',
-  },
-  postCard: {
-    backgroundColor: '#f9f9f9',
-    borderRadius: 12,
+  brand: { fontSize: 18, fontWeight: '700', letterSpacing: 1 },
+  header: { alignItems: 'center', marginBottom: 10, paddingTop: 8 },
+  welcome: { fontSize: 16, fontWeight: '600', marginTop: 6, color: '#333' },
+  listContent: { padding: 16, paddingBottom: 24 },
+  card: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    shadowColor: '#000',
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
     padding: 12,
     marginBottom: 16,
-    shadowColor: '#000',
-    shadowOpacity: 0.1,
-    shadowOffset: { width: 0, height: 2 },
-    shadowRadius: 6,
-    elevation: 3,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#eee',
   },
-  userRow: {
+  cardHeader: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 8,
   },
-  avatar: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    marginRight: 10,
-  },
-  username: {
-    fontWeight: 'bold',
-    color: '#000',
-  },
-  meta: {
-    fontSize: 12,
-    color: '#555',
-  },
-  tag: {
-    fontWeight: '600',
-    color: '#ff69b4',
-  },
-  postImage: {
-    width: '100%',
-    height: 220,
-    borderRadius: 10,
-    marginVertical: 10,
-  },
-  caption: {
-    color: '#333',
-    fontSize: 14,
-    marginBottom: 10,
-  },
-  actionsRow: {
+  avatar: { width: 36, height: 36, borderRadius: 18, marginRight: 8 },
+  username: { fontWeight: '700', marginBottom: 2 },
+  timestamp: { color: '#777', fontSize: 12 },
+  tag: { color: '#ff69b4', fontWeight: '600' },
+  media: { width: '100%', height: 240, borderRadius: 12, marginVertical: 8 },
+  bodyText: { fontSize: 14, lineHeight: 20, marginTop: 2 },
+  actionBar: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingHorizontal: 4,
-  },
-  starsRow: {
-    flexDirection: 'row',
-    justifyContent: 'flex-start',
-    marginBottom: 10,
-  },
-  star: {
-    fontSize: 32,
-    marginHorizontal: 4,
-    color: '#e6007e',
-  },
-  action: {
-    fontSize: 14,
-    color: '#555',
-  },
-  postVideo: {
-    width: '100%',
-    height: 200,
-    borderRadius: 10,
     marginTop: 10,
   },
+  actionBtn: { flexDirection: 'row', alignItems: 'center' },
+  actionLabel: { marginLeft: 6, fontWeight: '600' },
+  postVideo: {
+    width: '100%',
+    height: 220,
+    borderRadius: 12,
+    marginVertical: 8,
+  },
 });
+
+
+
 
