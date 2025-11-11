@@ -1,401 +1,426 @@
-// app/(tabs)/home.tsx
-import { useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  Alert,
-  Dimensions,
-  FlatList,
-  Image,
-  Pressable,
-  SafeAreaView,
-  Share,
-  StatusBar,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
-
-import { db, storage } from '@/firebase/firebaseConfig';
-import { Feather, Ionicons } from '@expo/vector-icons';
-import * as Haptics from 'expo-haptics';
-import { Video } from 'expo-video';
+import { db } from '@/firebase/firebaseConfig';
 import { getAuth } from 'firebase/auth';
 import {
+  addDoc,
   collection,
-  getDocs,
+  deleteDoc,
+  doc,
+  getDoc,
   limit,
   onSnapshot,
   orderBy,
   query,
+  serverTimestamp,
+  setDoc,
   Timestamp,
 } from 'firebase/firestore';
-import { getDownloadURL, ref as storageRef } from 'firebase/storage';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  ActivityIndicator,
+  FlatList,
+  Image,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 
-const screenWidth = Dimensions.get('window').width;
-
-function formatTimeAgoMs(ms: number | undefined) {
-  if (!ms) return 'Just now';
-  const now = Date.now();
-  const seconds = Math.floor((now - ms) / 1000);
-  const steps = [
-    ['year', 31536000],
-    ['month', 2592000],
-    ['week', 604800],
-    ['day', 86400],
-    ['hour', 3600],
-    ['minute', 60],
-    ['second', 1],
-  ] as const;
-  for (const [label, s] of steps) {
-    const count = Math.floor(seconds / s);
-    if (count >= 1) return `${count} ${label}${count > 1 ? 's' : ''} ago`;
-  }
-  return 'Just now';
-}
-
-type Review = {
+/* ================== Types ================== */
+type MediaItem = { url: string; type: 'image' | 'video' };
+type ReviewDoc = {
   id: string;
-  username: string;
-  avatarUrl?: string;
-  rating: number;
+  userId: string;
+  username?: string;
+  userDisplay?: string;
+  business: string;
+  location?: string;
+  service?: string;
+  rating?: number;
   caption?: string;
-  serviceType?: string;
-  media?: Array<{ type: 'image' | 'video'; url: string }>;
-  likes?: number;
-  comments?: number;
-  likedByMe?: boolean;
-  createdAtMs?: number;
+  media?: MediaItem[];
+  createdAt?:
+  | Timestamp
+  | Date
+  | { seconds: number; nanoseconds?: number }
+  | number
+  | null;
 };
 
-async function ensureUrl(pathOrUrl?: string): Promise<string | undefined> {
-  if (!pathOrUrl) return undefined;
-  if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
-  try {
-    return await getDownloadURL(storageRef(storage, pathOrUrl));
-  } catch (e) {
-    console.log('getDownloadURL failed for', pathOrUrl, e);
-    return undefined;
-  }
-}
+/* =============== Theme tokens =============== */
+const BG = '#f7f6fb';
+const CARD = '#fff';
+const INK = '#0E0E0E';
+const MUTED = '#6B6B6B';
+const BORDER = '#eee1f0';
+const ACCENT = '#6E56CF';
+const SOFT = '#e6dffa';
+const HEART = '#ff6aa2';
 
-async function normalizeDoc(id: string, data: any): Promise<Review> {
-  const createdAtMs =
-    data?.createdAt instanceof Timestamp
-      ? data.createdAt.toMillis()
-      : typeof data?.createdAt === 'number'
-        ? data.createdAt
-        : undefined;
-  const avatarUrl =
-    (await ensureUrl(data?.avatarUrl)) ?? (await ensureUrl(data?.avatarPath));
-  const media: Review['media'] = Array.isArray(data?.media)
-    ? await Promise.all(
-      data.media.map(async (m: any) => ({
-        type: m?.type === 'video' ? 'video' : 'image',
-        url: (await ensureUrl(m?.url ?? m?.path)) ?? '',
-      }))
-    )
-    : undefined;
-  return {
-    id,
-    username: data?.username ?? data?.handle ?? 'user',
-    avatarUrl,
-    rating: typeof data?.rating === 'number' ? data.rating : 0,
-    caption: data?.caption ?? data?.text ?? '',
-    serviceType: data?.serviceType,
-    media,
-    likes: data?.likes ?? 0,
-    comments: data?.comments ?? 0,
-    likedByMe: !!data?.likedByMe,
-    createdAtMs,
-  };
-}
-
-export default function HomeScreen() {
-  const router = useRouter();
-  const [reviews, setReviews] = useState<Review[]>([]);
-  const [currentUsername, setCurrentUsername] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
-
-  const fetchOnce = useCallback(async () => {
-    try {
-      const q = query(
-        collection(db, 'reviews'),
-        orderBy('createdAt', 'desc'),
-        limit(50)
-      );
-      const snap = await getDocs(q);
-      const rows = await Promise.all(
-        snap.docs.map((d) => normalizeDoc(d.id, d.data()))
-      );
-      setReviews(rows);
-    } catch (e) {
-      console.log('fetchOnce error:', e);
-    }
-  }, []);
-
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    await fetchOnce();
-    setRefreshing(false);
-  }, [fetchOnce]);
+/* =============== Home: feed shell =============== */
+export default function Home() {
+  const [items, setItems] = useState<ReviewDoc[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    (async () => {
-      try {
-        const auth = getAuth();
-        setCurrentUsername(auth.currentUser?.displayName ?? null);
-      } catch (e) {
-        console.log('Fetch current user error:', e);
+    const q = query(
+      collection(db, 'reviews'),
+      orderBy('createdAt', 'desc'),
+      limit(50)
+    );
+
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        const rows: ReviewDoc[] = snap.docs.map((d) => ({
+          id: d.id,
+          ...(d.data() as Omit<ReviewDoc, 'id'>),
+        }));
+
+        const hydrated = rows.map((r) => ({
+          ...r,
+          createdAt: (r as any).createdAt ?? new Date(),
+        }));
+
+        hydrated.sort((a, b) => tsToMillis(b.createdAt) - tsToMillis(a.createdAt));
+
+        setItems(hydrated);
+        setLoading(false);
+      },
+      (err) => {
+        console.error('home feed error', err);
+        setLoading(false);
       }
-    })();
+    );
+
+    return unsub;
   }, []);
 
-  useEffect(() => {
-    try {
-      const q = query(
-        collection(db, 'reviews'),
-        orderBy('createdAt', 'desc'),
-        limit(50)
-      );
-      const unsub = onSnapshot(q, async (snap) => {
-        try {
-          const rows = await Promise.all(
-            snap.docs.map((d) => normalizeDoc(d.id, d.data()))
-          );
-          setReviews(rows);
-        } catch (e) {
-          console.log('Normalize error:', e);
-        }
-      });
-      return () => unsub();
-    } catch (e) {
-      console.log('onSnapshot error:', e);
-    }
-  }, []);
-
-  const renderItem = useCallback(
-    ({ item }: { item: Review }) => (
-      <ReviewCard item={item} router={router} currentUsername={currentUsername} />
-    ),
-    [router, currentUsername]
-  );
+  if (loading) {
+    return (
+      <View style={[styles.container, { alignItems: 'center', justifyContent: 'center' }]}>
+        <ActivityIndicator />
+      </View>
+    );
+  }
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="dark-content" />
-      <View style={styles.topBar}>
-        <Pressable hitSlop={8}>
-          <Feather name="menu" size={22} />
-        </Pressable>
-        <Text style={styles.brand}>SLAY RATED</Text>
-        <Pressable hitSlop={8}>
-          <Feather name="search" size={22} />
-        </Pressable>
-      </View>
-      <View style={styles.header}>
-        <Text style={styles.welcome}>
-          Welcome back, @{currentUsername || 'slayqueen'}
+    <View style={styles.container}>
+      {/* CTA/status header */}
+      <View style={styles.statusBar}>
+        <Text style={styles.statusTitle}>Share your latest beauty experience ✨</Text>
+        <Text style={styles.statusSub}>
+          Post photos, a quick video, and your honest rating.
         </Text>
       </View>
-      <FlatList
-        data={reviews}
-        keyExtractor={(it) => it.id}
-        renderItem={renderItem}
-        contentContainerStyle={styles.listContent}
-        showsVerticalScrollIndicator={false}
-        refreshing={refreshing}
-        onRefresh={onRefresh}
-      />
-    </SafeAreaView>
-  );
-}
 
-function Stars({ value }: { value: number }) {
-  return (
-    <View style={{ flexDirection: 'row' }}>
-      {Array.from({ length: 5 }).map((_, i) => (
-        <Ionicons
-          key={i}
-          name={i < value ? 'star' : 'star-outline'}
-          size={16}
-          style={{ marginRight: 2 }}
-        />
-      ))}
+      <FlatList
+        data={items}
+        keyExtractor={(it) => it.id}
+        renderItem={({ item }) => <PostCard item={item} />}
+        contentContainerStyle={{ paddingBottom: 80 }}
+        ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
+        ListEmptyComponent={
+          <View style={{ alignItems: 'center', marginTop: 40 }}>
+            <Text style={{ color: MUTED }}>No reviews yet.</Text>
+          </View>
+        }
+        style={{ paddingHorizontal: 12 }}
+      />
     </View>
   );
 }
 
-function ReviewCard({
-  item,
-  router,
-  currentUsername,
-}: {
-  item: Review;
-  router: any;
-  currentUsername: string | null;
-}) {
-  const [liked, setLiked] = useState<boolean>(!!item.likedByMe);
-  const [likes, setLikes] = useState<number>(item.likes ?? 0);
+/* =============== Post Card =============== */
+function PostCard({ item }: { item: ReviewDoc }) {
+  const auth = getAuth();
+  const uid = auth.currentUser?.uid ?? 'anon';
 
-  const timeAgo = useMemo(
-    () => formatTimeAgoMs(item.createdAtMs),
-    [item.createdAtMs]
-  );
+  const firstMedia = item.media?.[0];
+  const date = tsToDate(item.createdAt);
+  const ago = formatTimeAgo(date);
 
-  const handleLike = async () => {
-    setLiked((v) => !v);
-    setLikes((n) => (liked ? Math.max(0, n - 1) : n + 1));
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => { });
-  };
+  // --- likes live state ---
+  const [likeCount, setLikeCount] = useState(0);
+  const [iLike, setILike] = useState(false);
 
-  const handleComment = () => {
-    Alert.alert('Comments', 'Open comments thread here.');
-  };
+  useEffect(() => {
+    const likesRef = collection(db, 'reviews', item.id, 'likes');
+    const unsub = onSnapshot(likesRef, (snap) => {
+      setLikeCount(snap.size);
+      setILike(snap.docs.some((d) => d.id === uid));
+    });
+    return unsub;
+  }, [item.id, uid]);
 
-  const handleShare = async () => {
-    try {
-      await Share.share({
-        message: `${item.username} on Slay Rated: ${item.caption ?? ''}`,
-        url: item.media && item.media[0]?.url,
-        title: 'Slay Rated Review',
+  const toggleLike = async () => {
+    const likeRef = doc(db, 'reviews', item.id, 'likes', uid);
+    const exists = await getDoc(likeRef);
+    if (exists.exists()) {
+      await deleteDoc(likeRef);
+    } else {
+      await setDoc(likeRef, {
+        userId: uid,
+        createdAt: serverTimestamp(),
       });
-    } catch (e) {
-      console.log('Share cancelled or failed', e);
     }
   };
+
+  // --- comments (preview + add) ---
+  const [comments, setComments] = useState<
+    { id: string; text: string; username?: string }[]
+  >([]);
+  const [commentText, setCommentText] = useState('');
+
+  useEffect(() => {
+    const commentsRef = query(
+      collection(db, 'reviews', item.id, 'comments'),
+      orderBy('createdAt', 'desc'),
+      limit(2)
+    );
+    const unsub = onSnapshot(commentsRef, (snap) => {
+      const rows = snap.docs.map((d) => {
+        const data = d.data() as any;
+        return {
+          id: d.id,
+          text: data.text ?? '',
+          username: data.username ?? 'user',
+        };
+      });
+      setComments(rows);
+    });
+    return unsub;
+  }, [item.id]);
+
+  const addComment = async () => {
+    const text = commentText.trim();
+    if (!text) return;
+    setCommentText('');
+    await addDoc(collection(db, 'reviews', item.id, 'comments'), {
+      userId: uid,
+      username: auth.currentUser?.email?.split('@')[0] ?? 'user',
+      text,
+      createdAt: serverTimestamp(),
+    });
+  };
+
+  const prompt = useMemo(() => {
+    const s = (item.service ?? '').toLowerCase();
+    if (s.includes('nail')) return 'Drop a gloss tip…';
+    if (s.includes('hair')) return 'Share product + stylist…';
+    if (s.includes('lash')) return 'Classic, hybrid, mega? Spill…';
+    return 'Be kind, be real…';
+  }, [item.service]);
 
   return (
     <View style={styles.card}>
-      <View style={styles.cardHeader}>
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          {item.avatarUrl ? (
-            <Image
-              source={{ uri: item.avatarUrl }}
-              style={styles.avatar}
-              resizeMode="cover"
-            />
-          ) : (
-            <View style={[styles.avatar, { backgroundColor: '#eee' }]} />
-          )}
+      {/* Header */}
+      <View style={styles.rowBetween}>
+        <View style={styles.row}>
+          <View style={styles.avatar} />
           <View>
-            <Pressable
-              onPress={() => {
-                const clean = (u?: string | null) => (u ?? '').replace(/^@/, '').trim();
-                const me = clean(currentUsername);
-                const them = clean(item.username);
-                if (me && me === them) {
-                  router.navigate('/(tabs)/profile');
-                } else {
-                  router.push(`/profile/${them}`);
-                }
-              }}
-            >
-              <Text style={styles.username}>
-                @{(item.username || '').replace(/^@/, '')}
-              </Text>
-            </Pressable>
-            <Stars value={item.rating} />
+            <Text style={styles.username}>
+              @{item.username ?? item.userDisplay ?? 'user'}
+            </Text>
+            <Text style={styles.subtle}>
+              {ago} • {item.service ?? 'beauty'}
+            </Text>
           </View>
         </View>
-        <Text style={styles.timestamp}>
-          {timeAgo} {item.serviceType ? '• ' : ''}{' '}
-          <Text style={styles.tag}>{item.serviceType}</Text>
-        </Text>
       </View>
-      {Array.isArray(item.media) &&
-        item.media.map((m, idx) =>
-          m.type === 'video' ? (
-            <Video
-              key={idx}
-              source={{ uri: m.url }}
-              style={styles.postVideo}
-              resizeMode="cover"
-              useNativeControls
-              shouldPlay={false}
-            />
-          ) : (
-            <Image
-              key={idx}
-              source={{ uri: m.url }}
-              style={styles.media}
-              resizeMode="cover"
-            />
-          )
-        )}
-      {!!item.caption && <Text style={styles.bodyText}>{item.caption}</Text>}
-      <View style={styles.actionBar}>
-        <Pressable style={styles.actionBtn} onPress={handleLike}>
-          <Ionicons name={liked ? 'heart' : 'heart-outline'} size={20} />
-          <Text style={styles.actionLabel}>{likes}</Text>
-        </Pressable>
-        <Pressable style={styles.actionBtn} onPress={handleComment}>
-          <Ionicons name="chatbubble-ellipses-outline" size={20} />
-          <Text style={styles.actionLabel}>{item.comments ?? 0}</Text>
-        </Pressable>
-        <Pressable style={styles.actionBtn} onPress={handleShare}>
-          <Ionicons name="share-outline" size={20} />
-          <Text style={styles.actionLabel}>Share</Text>
-        </Pressable>
+
+      {/* Media */}
+      {firstMedia?.type === 'image' && (
+        <Image source={{ uri: firstMedia.url }} style={styles.photo} />
+      )}
+
+      {/* Caption */}
+      {!!item.caption && <Text style={styles.caption}>{item.caption}</Text>}
+
+      {/* Meta: business + rating stars */}
+      <View style={styles.footer}>
+        <Text style={styles.muted}>
+          {item.business}
+          {item.location ? ` • ${item.location}` : ''}
+        </Text>
+        <View style={styles.row}>{renderStars(item.rating ?? 0)}</View>
+      </View>
+
+      {/* Actions */}
+      <View style={[styles.rowBetween, { marginTop: 8 }]}>
+        <TouchableOpacity style={styles.row} onPress={toggleLike} activeOpacity={0.7}>
+          <Text style={{ fontSize: 18, color: iLike ? HEART : MUTED }}>
+            {iLike ? '♥' : '♡'}
+          </Text>
+          <Text style={[styles.muted, { marginLeft: 6 }]}>{likeCount}</Text>
+        </TouchableOpacity>
+
+        <View style={styles.row}>
+          <Text style={[styles.muted]}>{comments.length} comments</Text>
+        </View>
+      </View>
+
+      {/* Comments preview */}
+      {comments.length > 0 && (
+        <View style={{ marginTop: 10, gap: 6 }}>
+          {comments.map((c) => (
+            <Text key={c.id} style={{ color: INK }}>
+              <Text style={{ fontWeight: '700' }}>
+                @{c.username ?? 'user'}
+              </Text>{' '}
+              {c.text}
+            </Text>
+          ))}
+        </View>
+      )}
+
+      {/* Add comment */}
+      <View style={styles.commentBox}>
+        <TextInput
+          value={commentText}
+          onChangeText={setCommentText}
+          placeholder={prompt}
+          placeholderTextColor={MUTED}
+          style={styles.input}
+          returnKeyType="send"
+          onSubmitEditing={addComment}
+        />
+        <TouchableOpacity onPress={addComment} activeOpacity={0.8}>
+          <Text style={{ color: ACCENT, fontWeight: '800' }}>Post</Text>
+        </TouchableOpacity>
       </View>
     </View>
   );
 }
 
+/* ================== Helpers ================== */
+function tsToMillis(ts: any): number {
+  const d = tsToDate(ts);
+  return d ? d.getTime() : 0;
+}
+
+function tsToDate(ts: any): Date | null {
+  if (!ts) return null;
+  if (typeof ts?.toDate === 'function') return ts.toDate(); // Firestore Timestamp
+  if (ts instanceof Date) return ts;
+  if (typeof ts === 'number') return new Date(ts);
+  if (typeof ts?.seconds === 'number') return new Date(ts.seconds * 1000);
+  return null;
+}
+
+function formatTimeAgo(date: Date | null): string {
+  if (!date) return 'just now';
+  const now = Date.now();
+  const diff = Math.max(0, now - date.getTime());
+
+  const secs = Math.floor(diff / 1000);
+  if (secs < 10) return 'just now';
+  if (secs < 60) return `${secs}s`;
+
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m`;
+
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h`;
+
+  const days = Math.floor(hrs / 24);
+  if (days < 7) return `${days}d`;
+
+  const weeks = Math.floor(days / 7);
+  if (weeks < 5) return `${weeks}w`;
+
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months}mo`;
+
+  const years = Math.floor(days / 365);
+  return `${years}y`;
+}
+
+function renderStars(n: number) {
+  const stars = Array.from({ length: 5 }).map((_, i) => {
+    const active = i < n;
+    return (
+      <Text
+        key={i}
+        style={{ fontSize: 16, color: active ? ACCENT : SOFT, marginLeft: 2 }}
+      >
+        ★
+      </Text>
+    );
+  });
+  return <View style={{ flexDirection: 'row' }}>{stars}</View>;
+}
+
+/* ================== Styles ================== */
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#fff' },
-  topBar: {
-    height: 52,
+  container: { flex: 1, backgroundColor: BG },
+  statusBar: {
+    backgroundColor: CARD,
     paddingHorizontal: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#eee',
-  },
-  brand: { fontSize: 18, fontWeight: '700', letterSpacing: 1 },
-  header: { alignItems: 'center', marginBottom: 10, paddingTop: 8 },
-  welcome: { fontSize: 16, fontWeight: '600', marginTop: 6, color: '#333' },
-  listContent: { padding: 16, paddingBottom: 24 },
-  card: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    shadowColor: '#000',
-    shadowOpacity: 0.06,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 3,
-    padding: 12,
-    marginBottom: 16,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: '#eee',
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    paddingTop: 14,
+    paddingBottom: 12,
+    borderBottomColor: BORDER,
+    borderBottomWidth: 1,
     marginBottom: 8,
   },
-  avatar: { width: 36, height: 36, borderRadius: 18, marginRight: 8 },
-  username: { fontWeight: '700', marginBottom: 2 },
-  timestamp: { color: '#777', fontSize: 12 },
-  tag: { color: '#ff69b4', fontWeight: '600' },
-  media: { width: '100%', height: 240, borderRadius: 12, marginVertical: 8 },
-  bodyText: { fontSize: 14, lineHeight: 20, marginTop: 2 },
-  actionBar: {
+  statusTitle: { fontWeight: '800', color: INK },
+  statusSub: { color: MUTED, marginTop: 4 },
+
+  card: {
+    backgroundColor: CARD,
+    borderRadius: 14,
+    padding: 12,
+    shadowColor: '#000',
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 2,
+  },
+  row: { flexDirection: 'row', alignItems: 'center' },
+  rowBetween: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  avatar: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#ddd',
+    marginRight: 10,
+  },
+  username: { fontWeight: '800', color: INK },
+  subtle: { color: MUTED, fontSize: 12, marginTop: 2 },
+
+  photo: { width: '100%', height: 260, borderRadius: 12, marginTop: 10 },
+  caption: { marginTop: 10, color: INK },
+
+  footer: {
+    marginTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: BORDER,
+    paddingTop: 10,
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginTop: 10,
+    alignItems: 'center',
   },
-  actionBtn: { flexDirection: 'row', alignItems: 'center' },
-  actionLabel: { marginLeft: 6, fontWeight: '600' },
-  postVideo: {
-    width: '100%',
-    height: 220,
-    borderRadius: 12,
-    marginVertical: 8,
+  muted: { color: MUTED, fontSize: 12 },
+
+  commentBox: {
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  input: {
+    flex: 1,
+    color: INK,
+    paddingVertical: 4,
   },
 });
-
-
-
 

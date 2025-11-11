@@ -1,8 +1,16 @@
 import { db } from '@/firebase/firebaseConfig';
 import { useRouter } from 'expo-router';
 import { getAuth } from 'firebase/auth';
-import { collection, doc, getDoc, getDocs, orderBy, query, where } from 'firebase/firestore';
-import React, { useEffect, useState } from 'react';
+import {
+    collection,
+    doc,
+    getDoc,
+    getDocs,
+    orderBy,
+    query,
+    where,
+} from 'firebase/firestore';
+import { useEffect, useState } from 'react';
 import {
     Dimensions,
     FlatList,
@@ -14,59 +22,82 @@ import {
     View,
 } from 'react-native';
 
+// ---------- Small header component (named export) ----------
+export function BigHeader({ title = 'SLAY RATED' }: { title?: string }) {
+    return (
+        <View style={styles.wrap}>
+            <Text style={styles.title}>{title}</Text>
+        </View>
+    );
+}
+
 const screenWidth = Dimensions.get('window').width;
 
+// ---------- Screen (default export) ----------
 export default function ProfileScreen() {
     const router = useRouter();
     const [profile, setProfile] = useState<any>(null);
     const [reviews, setReviews] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
 
-    const fetchUserProfileAndReviews = async () => {
-        const auth = getAuth();
-        const user = auth.currentUser;
-        if (!user) return;
-
-        try {
-            // Get user profile
-            const profileRef = doc(db, 'users', user.uid);
-            const profileSnap = await getDoc(profileRef);
-            const userData = profileSnap.exists() ? profileSnap.data() : null;
-            setProfile(userData);
-
-            // Get user reviews
-            const reviewsRef = collection(db, 'reviews');
-            const q = query(reviewsRef, where('userId', '==', user.uid), orderBy('createdAt', 'desc'));
-            const reviewsSnap = await getDocs(q);
-            const userReviews = reviewsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            setReviews(userReviews);
-        } catch (error) {
-            console.error('Error fetching profile or reviews:', error);
-        } finally {
-            setLoading(false);
-        }
-    };
-
     useEffect(() => {
+        const fetchUserProfileAndReviews = async () => {
+            const auth = getAuth();
+            const user = auth.currentUser;
+            if (!user) {
+                setLoading(false);
+                return;
+            }
+
+            try {
+                // Profile
+                const profileRef = doc(db, 'users', user.uid);
+                const profileSnap = await getDoc(profileRef);
+                const userData = profileSnap.exists() ? profileSnap.data() : null;
+                setProfile(userData);
+
+                // Reviews by this user (newest first)
+                const reviewsRef = collection(db, 'reviews');
+                const q = query(
+                    reviewsRef,
+                    where('userId', '==', user.uid),
+                    orderBy('createdAt', 'desc')
+                );
+                const reviewsSnap = await getDocs(q);
+                const userReviews = reviewsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+                setReviews(userReviews as any[]);
+            } catch (error) {
+                console.error('Error fetching profile or reviews:', error);
+            } finally {
+                setLoading(false);
+            }
+        };
+
         fetchUserProfileAndReviews();
     }, []);
 
     return (
-        <ScrollView style={styles.container}>
+        <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 32 }}>
+            {/* Optional big header */}
+            {/* <BigHeader title="SLAY RATED" /> */}
+
             {/* Header */}
             <View style={styles.header}>
                 <Image
                     source={
                         profile?.avatar
-                            ? { uri: profile.avatar }
-                            : require('../../assets/images/profile-avatar.jpg')
+                            ? { uri: String(profile.avatar) }
+                            : require('../../../assets/images/profile-avatar.jpg')
                     }
                     style={styles.avatar}
                 />
+
                 <View style={styles.headerInfo}>
                     <Text style={styles.username}>@{profile?.username || 'loading'}</Text>
-                    <Text style={styles.bio}>{profile?.bio || 'Certified nail addict 💅 | Houston, TX'}</Text>
-                    <Text style={styles.location}>📍 Houston, TX</Text>
+                    <Text style={styles.bio}>
+                        {profile?.bio || 'Certified nail addict 💅 | Houston, TX'}
+                    </Text>
+                    <Text style={styles.location}>📍 {profile?.location || 'Houston, TX'}</Text>
 
                     <View style={styles.stats}>
                         <Text style={styles.stat}>
@@ -75,7 +106,10 @@ export default function ProfileScreen() {
                     </View>
 
                     <View style={styles.buttonsRow}>
-                        <TouchableOpacity style={styles.button} onPress={() => router.push('/edit-profile')}>
+                        <TouchableOpacity
+                            style={styles.button}
+                            onPress={() => router.push('/edit-profile')}
+                        >
                             <Text style={styles.buttonText}>Edit Profile</Text>
                         </TouchableOpacity>
 
@@ -98,11 +132,11 @@ export default function ProfileScreen() {
                 </Text>
             ) : (
                 <FlatList
-                    data={reviews.filter((item) => item.media?.[0]?.url)}
+                    data={reviews.filter((item: any) => item?.media?.[0]?.url)}
                     numColumns={3}
-                    keyExtractor={(item) => item.id}
-                    renderItem={({ item }) => (
-                        <Image source={{ uri: item.media[0].url }} style={styles.gridImage} />
+                    keyExtractor={(item: any) => String(item.id)}
+                    renderItem={({ item }: { item: any }) => (
+                        <Image source={{ uri: String(item.media[0].url) }} style={styles.gridImage} />
                     )}
                     scrollEnabled={false}
                     contentContainerStyle={styles.gridContainer}
@@ -116,6 +150,18 @@ const styles = StyleSheet.create({
     container: {
         backgroundColor: '#fff',
     },
+    // BigHeader styles (optional)
+    wrap: {
+        paddingTop: 24,
+        paddingBottom: 8,
+        alignItems: 'center',
+    },
+    title: {
+        fontSize: 18,
+        fontWeight: '800',
+        letterSpacing: 2,
+    },
+
     header: {
         paddingTop: 40,
         paddingHorizontal: 20,
@@ -200,9 +246,3 @@ const styles = StyleSheet.create({
     },
 });
 
-
-
-
-
-
-// touch to force save

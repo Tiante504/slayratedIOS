@@ -5,6 +5,9 @@ export default function TabsLayout() {
   return (
     <Tabs
       screenOptions={{
+        headerTitle: 'SlayRated',
+        headerTitleAlign: 'center',
+        headerShadowVisible: false,
         tabBarActiveTintColor: '#ff69b4',
         tabBarLabelStyle: { fontSize: 12, fontWeight: 'bold' },
         tabBarStyle: {
@@ -13,6 +16,7 @@ export default function TabsLayout() {
           borderTopColor: '#ccc',
           paddingBottom: 6,
           height: 60,
+          headerShown: false,
         },
       }}
     >
