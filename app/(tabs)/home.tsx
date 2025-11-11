@@ -14,17 +14,24 @@ import {
   setDoc,
   Timestamp,
 } from 'firebase/firestore';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
   ActivityIndicator,
+  Dimensions,
   FlatList,
   Image,
+  Modal,
+  Pressable,
+  SafeAreaView,
+  StatusBar,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
+import { Video } from 'expo-av';
 
 /* ================== Types ================== */
 type MediaItem = { url: string; type: 'image' | 'video' };
@@ -33,18 +40,14 @@ type ReviewDoc = {
   userId: string;
   username?: string;
   userDisplay?: string;
+  userAvatar?: string;
   business: string;
   location?: string;
   service?: string;
   rating?: number;
   caption?: string;
-  media?: MediaItem[];
-  createdAt?:
-  | Timestamp
-  | Date
-  | { seconds: number; nanoseconds?: number }
-  | number
-  | null;
+  media?: unknown; // older docs may vary
+  createdAt?: Timestamp | Date | { seconds: number; nanoseconds?: number } | number | null;
 };
 
 /* =============== Theme tokens =============== */
@@ -56,34 +59,106 @@ const BORDER = '#eee1f0';
 const ACCENT = '#6E56CF';
 const SOFT = '#e6dffa';
 const HEART = '#ff6aa2';
+const BLACK = '#000';
 
-/* =============== Home: feed shell =============== */
+/* =============== Simple user cache (avatar/username) =============== */
+const userCache = new Map<string, { avatar?: string; username?: string }>();
+
+/* ================== Helpers ================== */
+function tsToMillis(ts: any): number {
+  const d = tsToDate(ts);
+  return d ? d.getTime() : 0;
+}
+function tsToDate(ts: any): Date | null {
+  if (!ts) return null;
+  if (typeof ts?.toDate === 'function') return ts.toDate();
+  if (ts instanceof Date) return ts;
+  if (typeof ts === 'number') return new Date(ts);
+  if (typeof ts?.seconds === 'number') return new Date(ts.seconds * 1000);
+  return null;
+}
+function formatTimeAgo(date: Date | null): string {
+  if (!date) return 'just now';
+  const now = Date.now();
+  const diff = Math.max(0, now - date.getTime());
+  const s = Math.floor(diff / 1000);
+  if (s < 10) return 'just now';
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  const d = Math.floor(h / 24);
+  if (d < 7) return `${d}d`;
+  const w = Math.floor(d / 7);
+  if (w < 5) return `${w}w`;
+  const mo = Math.floor(d / 30);
+  if (mo < 12) return `${mo}mo`;
+  const y = Math.floor(d / 365);
+  return `${y}y`;
+}
+function guessTypeFromUrl(url: string): 'image' | 'video' {
+  const v = /\.(mp4|mov|m4v|webm)$/i.test(url);
+  return v ? 'video' : 'image';
+}
+/** Normalize any historical media shape into MediaItem[] */
+function normalizeMedia(raw: any): MediaItem[] {
+  if (!raw) return [];
+  if (Array.isArray(raw)) {
+    return raw
+      .map((m) => {
+        if (!m) return null;
+        if (typeof m === 'string') return { url: m, type: guessTypeFromUrl(m) };
+        if (typeof m === 'object') {
+          const url = (m as any).url ?? (m as any).uri ?? (m as any).downloadURL ?? '';
+          if (!url) return null;
+          const type =
+            (m as any).type === 'image' || (m as any).type === 'video'
+              ? (m as any).type
+              : guessTypeFromUrl(url);
+          return { url, type };
+        }
+        return null;
+      })
+      .filter(Boolean) as MediaItem[];
+  }
+  if (typeof raw === 'string') return [{ url: raw, type: guessTypeFromUrl(raw) }];
+  if (typeof raw === 'object') {
+    const url = (raw as any).url ?? (raw as any).uri ?? (raw as any).downloadURL ?? '';
+    if (!url) return [];
+    const type =
+      (raw as any).type === 'image' || (raw as any).type === 'video'
+        ? (raw as any).type
+        : guessTypeFromUrl(url);
+    return [{ url, type }];
+  }
+  return [];
+}
+function renderStars(n: number) {
+  const stars = Array.from({ length: 5 }).map((_, i) => {
+    const active = i < n;
+    return (
+      <Text key={i} style={{ fontSize: 16, color: active ? ACCENT : SOFT, marginLeft: 2 }}>
+        ★
+      </Text>
+    );
+  });
+  return <View style={{ flexDirection: 'row' }}>{stars}</View>;
+}
+
+/* =============== Home (feed) =============== */
 export default function Home() {
   const [items, setItems] = useState<ReviewDoc[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const q = query(
-      collection(db, 'reviews'),
-      orderBy('createdAt', 'desc'),
-      limit(50)
-    );
-
+    const q = query(collection(db, 'reviews'), orderBy('createdAt', 'desc'), limit(50));
     const unsub = onSnapshot(
       q,
       (snap) => {
-        const rows: ReviewDoc[] = snap.docs.map((d) => ({
-          id: d.id,
-          ...(d.data() as Omit<ReviewDoc, 'id'>),
-        }));
-
-        const hydrated = rows.map((r) => ({
-          ...r,
-          createdAt: (r as any).createdAt ?? new Date(),
-        }));
-
+        const rows: ReviewDoc[] = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+        const hydrated = rows.map((r) => ({ ...r, createdAt: (r as any).createdAt ?? new Date() }));
         hydrated.sort((a, b) => tsToMillis(b.createdAt) - tsToMillis(a.createdAt));
-
         setItems(hydrated);
         setLoading(false);
       },
@@ -92,7 +167,6 @@ export default function Home() {
         setLoading(false);
       }
     );
-
     return unsub;
   }, []);
 
@@ -106,12 +180,9 @@ export default function Home() {
 
   return (
     <View style={styles.container}>
-      {/* CTA/status header */}
       <View style={styles.statusBar}>
         <Text style={styles.statusTitle}>Share your latest beauty experience ✨</Text>
-        <Text style={styles.statusSub}>
-          Post photos, a quick video, and your honest rating.
-        </Text>
+        <Text style={styles.statusSub}>Post photos, a quick video, and your honest rating.</Text>
       </View>
 
       <FlatList
@@ -135,15 +206,33 @@ export default function Home() {
 function PostCard({ item }: { item: ReviewDoc }) {
   const auth = getAuth();
   const uid = auth.currentUser?.uid ?? 'anon';
-
-  const firstMedia = item.media?.[0];
   const date = tsToDate(item.createdAt);
   const ago = formatTimeAgo(date);
 
-  // --- likes live state ---
+  // resolve avatar (prefer review's userAvatar, else /users/{userId}, cached)
+  const [avatarUrl, setAvatarUrl] = useState<string | undefined>(item.userAvatar);
+  useEffect(() => {
+    if (avatarUrl || !item.userId) return;
+    const cached = userCache.get(item.userId);
+    if (cached?.avatar) {
+      setAvatarUrl(cached.avatar);
+      return;
+    }
+    (async () => {
+      try {
+        const snap = await getDoc(doc(db, 'users', item.userId));
+        const data = snap.exists() ? (snap.data() as any) : null;
+        if (data?.avatar) {
+          userCache.set(item.userId, { avatar: data.avatar, username: data?.username });
+          setAvatarUrl(data.avatar);
+        }
+      } catch {}
+    })();
+  }, [item.userId, avatarUrl]);
+
+  // likes
   const [likeCount, setLikeCount] = useState(0);
   const [iLike, setILike] = useState(false);
-
   useEffect(() => {
     const likesRef = collection(db, 'reviews', item.id, 'likes');
     const unsub = onSnapshot(likesRef, (snap) => {
@@ -156,22 +245,13 @@ function PostCard({ item }: { item: ReviewDoc }) {
   const toggleLike = async () => {
     const likeRef = doc(db, 'reviews', item.id, 'likes', uid);
     const exists = await getDoc(likeRef);
-    if (exists.exists()) {
-      await deleteDoc(likeRef);
-    } else {
-      await setDoc(likeRef, {
-        userId: uid,
-        createdAt: serverTimestamp(),
-      });
-    }
+    if (exists.exists()) await deleteDoc(likeRef);
+    else await setDoc(likeRef, { userId: uid, createdAt: serverTimestamp() });
   };
 
-  // --- comments (preview + add) ---
-  const [comments, setComments] = useState<
-    { id: string; text: string; username?: string }[]
-  >([]);
+  // comments preview + add
+  const [comments, setComments] = useState<{ id: string; text: string; username?: string }[]>([]);
   const [commentText, setCommentText] = useState('');
-
   useEffect(() => {
     const commentsRef = query(
       collection(db, 'reviews', item.id, 'comments'),
@@ -181,11 +261,7 @@ function PostCard({ item }: { item: ReviewDoc }) {
     const unsub = onSnapshot(commentsRef, (snap) => {
       const rows = snap.docs.map((d) => {
         const data = d.data() as any;
-        return {
-          id: d.id,
-          text: data.text ?? '',
-          username: data.username ?? 'user',
-        };
+        return { id: d.id, text: data.text ?? '', username: data.username ?? 'user' };
       });
       setComments(rows);
     });
@@ -204,23 +280,21 @@ function PostCard({ item }: { item: ReviewDoc }) {
     });
   };
 
-  const prompt = useMemo(() => {
-    const s = (item.service ?? '').toLowerCase();
-    if (s.includes('nail')) return 'Drop a gloss tip…';
-    if (s.includes('hair')) return 'Share product + stylist…';
-    if (s.includes('lash')) return 'Classic, hybrid, mega? Spill…';
-    return 'Be kind, be real…';
-  }, [item.service]);
+  const media = normalizeMedia(item.media);
 
   return (
     <View style={styles.card}>
       {/* Header */}
       <View style={styles.rowBetween}>
         <View style={styles.row}>
-          <View style={styles.avatar} />
+          {avatarUrl ? (
+            <Image source={{ uri: avatarUrl }} style={styles.avatarImg} />
+          ) : (
+            <View style={styles.avatar} />
+          )}
           <View>
             <Text style={styles.username}>
-              @{item.username ?? item.userDisplay ?? 'user'}
+              @{item.username || item.userDisplay?.split('@')[0] || 'user'}
             </Text>
             <Text style={styles.subtle}>
               {ago} • {item.service ?? 'beauty'}
@@ -229,15 +303,13 @@ function PostCard({ item }: { item: ReviewDoc }) {
         </View>
       </View>
 
-      {/* Media */}
-      {firstMedia?.type === 'image' && (
-        <Image source={{ uri: firstMedia.url }} style={styles.photo} />
-      )}
+      {/* Media carousel */}
+      <MediaCarousel media={media} />
 
       {/* Caption */}
       {!!item.caption && <Text style={styles.caption}>{item.caption}</Text>}
 
-      {/* Meta: business + rating stars */}
+      {/* Meta */}
       <View style={styles.footer}>
         <Text style={styles.muted}>
           {item.business}
@@ -254,7 +326,6 @@ function PostCard({ item }: { item: ReviewDoc }) {
           </Text>
           <Text style={[styles.muted, { marginLeft: 6 }]}>{likeCount}</Text>
         </TouchableOpacity>
-
         <View style={styles.row}>
           <Text style={[styles.muted]}>{comments.length} comments</Text>
         </View>
@@ -265,10 +336,7 @@ function PostCard({ item }: { item: ReviewDoc }) {
         <View style={{ marginTop: 10, gap: 6 }}>
           {comments.map((c) => (
             <Text key={c.id} style={{ color: INK }}>
-              <Text style={{ fontWeight: '700' }}>
-                @{c.username ?? 'user'}
-              </Text>{' '}
-              {c.text}
+              <Text style={{ fontWeight: '700' }}>@{c.username ?? 'user'}</Text> {c.text}
             </Text>
           ))}
         </View>
@@ -279,7 +347,7 @@ function PostCard({ item }: { item: ReviewDoc }) {
         <TextInput
           value={commentText}
           onChangeText={setCommentText}
-          placeholder={prompt}
+          placeholder={'Be kind, be real…'}
           placeholderTextColor={MUTED}
           style={styles.input}
           returnKeyType="send"
@@ -293,62 +361,139 @@ function PostCard({ item }: { item: ReviewDoc }) {
   );
 }
 
-/* ================== Helpers ================== */
-function tsToMillis(ts: any): number {
-  const d = tsToDate(ts);
-  return d ? d.getTime() : 0;
+/* =============== Media Carousel + Fullscreen Viewer =============== */
+function MediaCarousel({ media }: { media: MediaItem[] }) {
+  const { width } = useWindowDimensions();
+  const [index, setIndex] = useState(0);
+
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const [viewerIndex, setViewerIndex] = useState(0);
+
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 80 }).current;
+  const onViewableItemsChanged = useRef(({ viewableItems }: any) => {
+    if (viewableItems?.length) setIndex(viewableItems[0].index ?? 0);
+  }).current;
+
+  const openViewer = useCallback((startAt: number) => {
+    setViewerIndex(startAt);
+    setViewerOpen(true);
+    StatusBar.setBarStyle('light-content');
+  }, []);
+  const closeViewer = useCallback(() => {
+    setViewerOpen(false);
+    StatusBar.setBarStyle('dark-content');
+  }, []);
+
+  if (!media || !Array.isArray(media) || media.length === 0) return null;
+
+  return (
+    <>
+      {/* Position badges/dots relative to media */}
+      <View style={{ position: 'relative' }}>
+        <FlatList
+          data={media}
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          keyExtractor={(_, i) => String(i)}
+          renderItem={({ item, index: i }) => (
+            <Pressable onPress={() => openViewer(i)} style={{ width }}>
+              {item.type === 'image' ? (
+                <Image source={{ uri: item.url }} style={styles.photo} />
+              ) : (
+                <SmartVideo uri={item.url} playing={i === index} />
+              )}
+            </Pressable>
+          )}
+          onViewableItemsChanged={onViewableItemsChanged}
+          viewabilityConfig={viewabilityConfig}
+        />
+
+        {/* counter: top-right */}
+        <View style={styles.counterWrapRight}>
+          <View style={styles.counterBadge}>
+            <Text style={styles.counterText}>{index + 1} / {media.length}</Text>
+          </View>
+        </View>
+
+        {/* dots: bottom-center */}
+        {media.length > 1 && (
+          <View style={styles.dotsBottomCenter}>
+            <View style={{ flexDirection: 'row', gap: 6 }}>
+              {media.map((_, i) => (
+                <View key={i} style={[styles.dot, i === index && styles.dotActive]} />
+              ))}
+            </View>
+          </View>
+        )}
+      </View>
+
+      {/* Fullscreen viewer */}
+      <Modal visible={viewerOpen} animationType="fade" onRequestClose={closeViewer}>
+        <SafeAreaView style={styles.viewerRoot}>
+          <View style={styles.viewerHeader}>
+            <TouchableOpacity onPress={closeViewer} style={styles.closeBtn}>
+              <Text style={styles.closeTxt}>✕</Text>
+            </TouchableOpacity>
+            <Text style={styles.viewerTitle}>{viewerIndex + 1} / {media.length}</Text>
+            <View style={{ width: 44 }} />
+          </View>
+
+          <FlatList
+            data={media}
+            horizontal
+            pagingEnabled
+            initialScrollIndex={viewerIndex}
+            keyExtractor={(_, i) => `v-${i}`}
+            getItemLayout={(_, i) => ({
+              length: Dimensions.get('window').width,
+              offset: i * Dimensions.get('window').width,
+              index: i,
+            })}
+            onMomentumScrollEnd={(e) => {
+              const w = Dimensions.get('window').width;
+              const idx = Math.round(e.nativeEvent.contentOffset.x / w);
+              setViewerIndex(idx);
+            }}
+            renderItem={({ item }) => (
+              <View style={styles.viewerSlide}>
+                {item.type === 'image' ? (
+                  <Image
+                    source={{ uri: item.url }}
+                    style={styles.viewerImage}
+                    resizeMode="contain"
+                  />
+                ) : (
+                  <Video
+                    source={{ uri: item.url }}
+                    style={styles.viewerImage}
+                    resizeMode="contain"
+                    shouldPlay
+                    useNativeControls
+                    isLooping
+                  />
+                )}
+              </View>
+            )}
+          />
+        </SafeAreaView>
+      </Modal>
+    </>
+  );
 }
 
-function tsToDate(ts: any): Date | null {
-  if (!ts) return null;
-  if (typeof ts?.toDate === 'function') return ts.toDate(); // Firestore Timestamp
-  if (ts instanceof Date) return ts;
-  if (typeof ts === 'number') return new Date(ts);
-  if (typeof ts?.seconds === 'number') return new Date(ts.seconds * 1000);
-  return null;
-}
-
-function formatTimeAgo(date: Date | null): string {
-  if (!date) return 'just now';
-  const now = Date.now();
-  const diff = Math.max(0, now - date.getTime());
-
-  const secs = Math.floor(diff / 1000);
-  if (secs < 10) return 'just now';
-  if (secs < 60) return `${secs}s`;
-
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m`;
-
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h`;
-
-  const days = Math.floor(hrs / 24);
-  if (days < 7) return `${days}d`;
-
-  const weeks = Math.floor(days / 7);
-  if (weeks < 5) return `${weeks}w`;
-
-  const months = Math.floor(days / 30);
-  if (months < 12) return `${months}mo`;
-
-  const years = Math.floor(days / 365);
-  return `${years}y`;
-}
-
-function renderStars(n: number) {
-  const stars = Array.from({ length: 5 }).map((_, i) => {
-    const active = i < n;
-    return (
-      <Text
-        key={i}
-        style={{ fontSize: 16, color: active ? ACCENT : SOFT, marginLeft: 2 }}
-      >
-        ★
-      </Text>
-    );
-  });
-  return <View style={{ flexDirection: 'row' }}>{stars}</View>;
+function SmartVideo({ uri, playing }: { uri: string; playing: boolean }) {
+  return (
+    <Video
+      source={{ uri }}
+      style={styles.photo}
+      resizeMode="cover"
+      shouldPlay={playing}
+      isLooping
+      useNativeControls={false}
+      isMuted={!playing}
+    />
+  );
 }
 
 /* ================== Styles ================== */
@@ -377,18 +522,11 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   row: { flexDirection: 'row', alignItems: 'center' },
-  rowBetween: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  avatar: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: '#ddd',
-    marginRight: 10,
-  },
+  rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+
+  avatar: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#ddd', marginRight: 10 },
+  avatarImg: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#ddd', marginRight: 10 },
+
   username: { fontWeight: '800', color: INK },
   subtle: { color: MUTED, fontSize: 12, marginTop: 2 },
 
@@ -417,10 +555,46 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
   },
-  input: {
-    flex: 1,
-    color: INK,
-    paddingVertical: 4,
+  input: { flex: 1, color: INK, paddingVertical: 4 },
+
+  // counter top-right over media
+  counterWrapRight: { position: 'absolute', top: 12, right: 12 },
+  counterBadge: { backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 12, paddingHorizontal: 8, paddingVertical: 2 },
+  counterText: { color: '#fff', fontWeight: '800', fontSize: 12 },
+
+  // dots bottom-center
+  dotsBottomCenter: {
+    position: 'absolute',
+    bottom: 12,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
+  dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.5)' },
+  dotActive: { backgroundColor: '#fff', width: 14, borderRadius: 7 },
+
+  // fullscreen viewer
+  viewerRoot: { flex: 1, backgroundColor: BLACK },
+  viewerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingTop: 8,
+    paddingBottom: 4,
+  },
+  viewerTitle: { color: '#fff', fontWeight: '800' },
+  closeBtn: { width: 44, height: 36, alignItems: 'center', justifyContent: 'center' },
+  closeTxt: { color: '#fff', fontSize: 20, fontWeight: '900' },
+  viewerSlide: {
+    width: Dimensions.get('window').width,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flex: 1,
+  },
+  viewerImage: { width: '100%', height: '100%' },
 });
+
+
 
