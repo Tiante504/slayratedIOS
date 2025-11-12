@@ -1,4 +1,5 @@
 import { db } from '@/firebase/firebaseConfig';
+import { Video } from 'expo-av';
 import { getAuth } from 'firebase/auth';
 import {
   addDoc,
@@ -14,7 +15,7 @@ import {
   setDoc,
   Timestamp,
 } from 'firebase/firestore';
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Dimensions,
@@ -31,10 +32,10 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
-import { Video } from 'expo-av';
 
 /* ================== Types ================== */
 type MediaItem = { url: string; type: 'image' | 'video' };
+
 type ReviewDoc = {
   id: string;
   userId: string;
@@ -46,9 +47,32 @@ type ReviewDoc = {
   service?: string;
   rating?: number;
   caption?: string;
-  media?: unknown; // older docs may vary
-  createdAt?: Timestamp | Date | { seconds: number; nanoseconds?: number } | number | null;
+  media?: unknown;
+  createdAt?:
+  | Timestamp
+  | Date
+  | { seconds: number; nanoseconds?: number }
+  | number
+  | null;
 };
+
+type StatusDoc = {
+  id: string;
+  userId: string;
+  username?: string;
+  userAvatar?: string;
+  text: string;
+  createdAt?:
+  | Timestamp
+  | Date
+  | { seconds: number; nanoseconds?: number }
+  | number
+  | null;
+};
+
+type FeedItem =
+  | { type: 'review'; createdAt: any; data: ReviewDoc }
+  | { type: 'status'; createdAt: any; data: StatusDoc };
 
 /* =============== Theme tokens =============== */
 const BG = '#f7f6fb';
@@ -56,10 +80,12 @@ const CARD = '#fff';
 const INK = '#0E0E0E';
 const MUTED = '#6B6B6B';
 const BORDER = '#eee1f0';
-const ACCENT = '#6E56CF';
+const ACCENT = '#6E56CF'; // deep brand purple
 const SOFT = '#e6dffa';
 const HEART = '#ff6aa2';
 const BLACK = '#000';
+const LIME = '#E5FFCC';
+const PURPLE = '#B266FF';
 
 /* =============== Simple user cache (avatar/username) =============== */
 const userCache = new Map<string, { avatar?: string; username?: string }>();
@@ -110,7 +136,8 @@ function normalizeMedia(raw: any): MediaItem[] {
         if (!m) return null;
         if (typeof m === 'string') return { url: m, type: guessTypeFromUrl(m) };
         if (typeof m === 'object') {
-          const url = (m as any).url ?? (m as any).uri ?? (m as any).downloadURL ?? '';
+          const url =
+            (m as any).url ?? (m as any).uri ?? (m as any).downloadURL ?? '';
           if (!url) return null;
           const type =
             (m as any).type === 'image' || (m as any).type === 'video'
@@ -124,7 +151,8 @@ function normalizeMedia(raw: any): MediaItem[] {
   }
   if (typeof raw === 'string') return [{ url: raw, type: guessTypeFromUrl(raw) }];
   if (typeof raw === 'object') {
-    const url = (raw as any).url ?? (raw as any).uri ?? (raw as any).downloadURL ?? '';
+    const url =
+      (raw as any).url ?? (raw as any).uri ?? (raw as any).downloadURL ?? '';
     if (!url) return [];
     const type =
       (raw as any).type === 'image' || (raw as any).type === 'video'
@@ -148,68 +176,275 @@ function renderStars(n: number) {
 
 /* =============== Home (feed) =============== */
 export default function Home() {
-  const [items, setItems] = useState<ReviewDoc[]>([]);
+  const [feed, setFeed] = useState<FeedItem[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // status composer
+  const [statusText, setStatusText] = useState('');
+  const remaining = 150 - statusText.length;
+
+  // subscribe to reviews + statuses and merge
   useEffect(() => {
-    const q = query(collection(db, 'reviews'), orderBy('createdAt', 'desc'), limit(50));
-    const unsub = onSnapshot(
-      q,
+    setLoading(true);
+
+    const revQ = query(collection(db, 'reviews'), orderBy('createdAt', 'desc'), limit(50));
+    const statQ = query(collection(db, 'statuses'), orderBy('createdAt', 'desc'), limit(50));
+
+    let reviews: FeedItem[] = [];
+    let statuses: FeedItem[] = [];
+
+    const apply = () => {
+      const merged = [...reviews, ...statuses].sort(
+        (a, b) => tsToMillis(b.createdAt) - tsToMillis(a.createdAt)
+      );
+      setFeed(merged);
+      setLoading(false);
+    };
+
+    const unsubReviews = onSnapshot(
+      revQ,
       (snap) => {
-        const rows: ReviewDoc[] = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
-        const hydrated = rows.map((r) => ({ ...r, createdAt: (r as any).createdAt ?? new Date() }));
-        hydrated.sort((a, b) => tsToMillis(b.createdAt) - tsToMillis(a.createdAt));
-        setItems(hydrated);
-        setLoading(false);
+        reviews = snap.docs.map((d) => {
+          const data = { id: d.id, ...(d.data() as any) } as ReviewDoc;
+          return { type: 'review', createdAt: (data as any).createdAt ?? new Date(), data };
+        });
+        apply();
       },
-      (err) => {
-        console.error('home feed error', err);
-        setLoading(false);
+      (e) => {
+        console.error('reviews sub error', e);
+        apply();
       }
     );
-    return unsub;
+
+    const unsubStatuses = onSnapshot(
+      statQ,
+      (snap) => {
+        statuses = snap.docs.map((d) => {
+          const data = { id: d.id, ...(d.data() as any) } as StatusDoc;
+          return { type: 'status', createdAt: (data as any).createdAt ?? new Date(), data };
+        });
+        apply();
+      },
+      (e) => {
+        console.error('statuses sub error', e);
+        apply();
+      }
+    );
+
+    return () => {
+      unsubReviews();
+      unsubStatuses();
+    };
   }, []);
 
-  if (loading) {
-    return (
-      <View style={[styles.container, { alignItems: 'center', justifyContent: 'center' }]}>
-        <ActivityIndicator />
-      </View>
-    );
-  }
+  const postStatus = async () => {
+    const text = statusText.trim();
+    if (!text) return;
+    const auth = getAuth();
+    const uid = auth.currentUser?.uid ?? 'anon';
+    const username = auth.currentUser?.email?.split('@')[0] ?? 'user';
+
+    const safe = text.slice(0, 150);
+
+    await addDoc(collection(db, 'statuses'), {
+      userId: uid,
+      username,
+      text: safe,
+      createdAt: serverTimestamp(),
+    });
+
+    setStatusText('');
+  };
 
   return (
     <View style={styles.container}>
+
+      {/* ===== Intro and status composer ===== */}
       <View style={styles.statusBar}>
         <Text style={styles.statusTitle}>Share your latest beauty experience ✨</Text>
         <Text style={styles.statusSub}>Post photos, a quick video, and your honest rating.</Text>
+
+        {/* Status composer */}
+        <View style={styles.postBox}>
+          <TextInput
+            value={statusText}
+            onChangeText={setStatusText}
+            maxLength={150}
+            placeholder="Ask for appointments, share updates… (150 chars)"
+            placeholderTextColor={MUTED}
+            style={styles.postInput}
+            returnKeyType="send"
+            onSubmitEditing={postStatus}
+          />
+          <Text style={[styles.counter, { color: remaining < 15 ? ACCENT : MUTED }]}>
+            {remaining}
+          </Text>
+          <TouchableOpacity
+            onPress={postStatus}
+            activeOpacity={0.85}
+            style={[styles.postBtn, !statusText.trim() && { opacity: 0.5 }]}
+            disabled={!statusText.trim()}
+          >
+            <Text style={styles.postBtnText}>Post</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
-      <FlatList
-        data={items}
-        keyExtractor={(it) => it.id}
-        renderItem={({ item }) => <PostCard item={item} />}
-        contentContainerStyle={{ paddingBottom: 80 }}
-        ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
-        ListEmptyComponent={
-          <View style={{ alignItems: 'center', marginTop: 40 }}>
-            <Text style={{ color: MUTED }}>No reviews yet.</Text>
-          </View>
-        }
-        style={{ paddingHorizontal: 12 }}
-      />
+      {/* ===== Feed (reviews + statuses merged) ===== */}
+      {loading ? (
+        <View style={[styles.container, { alignItems: 'center', justifyContent: 'center' }]}>
+          <ActivityIndicator />
+        </View>
+      ) : (
+        <FlatList
+          data={feed}
+          keyExtractor={(it, idx) =>
+            (it.type === 'review'
+              ? `r-${(it.data as ReviewDoc).id}`
+              : `s-${(it.data as StatusDoc).id}`) || String(idx)
+          }
+          renderItem={({ item }) =>
+            item.type === 'review' ? (
+              <PostCard item={item.data as ReviewDoc} />
+            ) : (
+              <StatusCard item={item.data as StatusDoc} />
+            )
+          }
+          contentContainerStyle={{ paddingBottom: 80 }}
+          ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
+          ListEmptyComponent={
+            <View style={{ alignItems: 'center', marginTop: 40 }}>
+              <Text style={{ color: MUTED }}>No posts yet.</Text>
+            </View>
+          }
+          style={{ paddingHorizontal: 12 }}
+        />
+      )}
     </View>
   );
 }
 
-/* =============== Post Card =============== */
+/* =============== Status Card (with likes + comments) =============== */
+function StatusCard({ item }: { item: StatusDoc }) {
+  const auth = getAuth();
+  const uid = auth.currentUser?.uid ?? 'anon';
+
+  const date = tsToDate(item.createdAt);
+  const ago = formatTimeAgo(date);
+
+  const [likeCount, setLikeCount] = useState(0);
+  const [iLike, setILike] = useState(false);
+  useEffect(() => {
+    const likesRef = collection(db, 'statuses', item.id, 'likes');
+    const unsub = onSnapshot(likesRef, (snap) => {
+      setLikeCount(snap.size);
+      setILike(snap.docs.some((d) => d.id === uid));
+    });
+    return unsub;
+  }, [item.id, uid]);
+
+  const toggleLike = async () => {
+    const likeRef = doc(db, 'statuses', item.id, 'likes', uid);
+    const exists = await getDoc(likeRef);
+    if (exists.exists()) await deleteDoc(likeRef);
+    else await setDoc(likeRef, { userId: uid, createdAt: serverTimestamp() });
+  };
+
+  const [comments, setComments] = useState<{ id: string; text: string; username?: string }[]>([]);
+  const [commentText, setCommentText] = useState('');
+  useEffect(() => {
+    const commentsRef = query(
+      collection(db, 'statuses', item.id, 'comments'),
+      orderBy('createdAt', 'desc'),
+      limit(2)
+    );
+    const unsub = onSnapshot(commentsRef, (snap) => {
+      const rows = snap.docs.map((d) => {
+        const data = d.data() as any;
+        return { id: d.id, text: data.text ?? '', username: data.username ?? 'user' };
+      });
+      setComments(rows);
+    });
+    return unsub;
+  }, [item.id]);
+
+  const addComment = async () => {
+    const text = commentText.trim();
+    if (!text) return;
+    setCommentText('');
+    await addDoc(collection(db, 'statuses', item.id, 'comments'), {
+      userId: uid,
+      username: auth.currentUser?.email?.split('@')[0] ?? 'user',
+      text,
+      createdAt: serverTimestamp(),
+    });
+  };
+
+  return (
+    <View style={styles.card}>
+      <View style={styles.rowBetween}>
+        <View style={styles.row}>
+          {item.userAvatar ? (
+            <Image source={{ uri: item.userAvatar }} style={styles.avatarImg} />
+          ) : (
+            <View style={styles.avatar} />
+          )}
+          <View>
+            <Text style={styles.username}>@{item.username || 'user'}</Text>
+            <Text style={styles.subtle}>{ago} • status</Text>
+          </View>
+        </View>
+      </View>
+
+      <Text style={[styles.caption, { marginTop: 6 }]}>{item.text}</Text>
+
+      <View style={[styles.rowBetween, { marginTop: 10 }]}>
+        <TouchableOpacity style={styles.row} onPress={toggleLike} activeOpacity={0.7}>
+          <Text style={{ fontSize: 18, color: iLike ? HEART : MUTED }}>
+            {iLike ? '♥' : '♡'}
+          </Text>
+          <Text style={[styles.muted, { marginLeft: 6 }]}>{likeCount}</Text>
+        </TouchableOpacity>
+        <View style={styles.row}>
+          <Text style={[styles.muted]}>{comments.length} comments</Text>
+        </View>
+      </View>
+
+      {comments.length > 0 && (
+        <View style={{ marginTop: 10, gap: 6 }}>
+          {comments.map((c) => (
+            <Text key={c.id} style={{ color: INK }}>
+              <Text style={{ fontWeight: '700' }}>@{c.username ?? 'user'}</Text> {c.text}
+            </Text>
+          ))}
+        </View>
+      )}
+
+      <View style={styles.commentBox}>
+        <TextInput
+          value={commentText}
+          onChangeText={setCommentText}
+          placeholder={'Be kind, be real…'}
+          placeholderTextColor={MUTED}
+          style={styles.input}
+          returnKeyType="send"
+          onSubmitEditing={addComment}
+        />
+        <TouchableOpacity onPress={addComment} activeOpacity={0.8}>
+          <Text style={{ color: ACCENT, fontWeight: '800' }}>Post</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
+/* =============== Post Card (reviews) =============== */
 function PostCard({ item }: { item: ReviewDoc }) {
   const auth = getAuth();
   const uid = auth.currentUser?.uid ?? 'anon';
   const date = tsToDate(item.createdAt);
   const ago = formatTimeAgo(date);
 
-  // resolve avatar (prefer review's userAvatar, else /users/{userId}, cached)
   const [avatarUrl, setAvatarUrl] = useState<string | undefined>(item.userAvatar);
   useEffect(() => {
     if (avatarUrl || !item.userId) return;
@@ -226,11 +461,10 @@ function PostCard({ item }: { item: ReviewDoc }) {
           userCache.set(item.userId, { avatar: data.avatar, username: data?.username });
           setAvatarUrl(data.avatar);
         }
-      } catch {}
+      } catch { }
     })();
   }, [item.userId, avatarUrl]);
 
-  // likes
   const [likeCount, setLikeCount] = useState(0);
   const [iLike, setILike] = useState(false);
   useEffect(() => {
@@ -249,7 +483,6 @@ function PostCard({ item }: { item: ReviewDoc }) {
     else await setDoc(likeRef, { userId: uid, createdAt: serverTimestamp() });
   };
 
-  // comments preview + add
   const [comments, setComments] = useState<{ id: string; text: string; username?: string }[]>([]);
   const [commentText, setCommentText] = useState('');
   useEffect(() => {
@@ -284,7 +517,6 @@ function PostCard({ item }: { item: ReviewDoc }) {
 
   return (
     <View style={styles.card}>
-      {/* Header */}
       <View style={styles.rowBetween}>
         <View style={styles.row}>
           {avatarUrl ? (
@@ -303,13 +535,10 @@ function PostCard({ item }: { item: ReviewDoc }) {
         </View>
       </View>
 
-      {/* Media carousel */}
       <MediaCarousel media={media} />
 
-      {/* Caption */}
       {!!item.caption && <Text style={styles.caption}>{item.caption}</Text>}
 
-      {/* Meta */}
       <View style={styles.footer}>
         <Text style={styles.muted}>
           {item.business}
@@ -318,7 +547,6 @@ function PostCard({ item }: { item: ReviewDoc }) {
         <View style={styles.row}>{renderStars(item.rating ?? 0)}</View>
       </View>
 
-      {/* Actions */}
       <View style={[styles.rowBetween, { marginTop: 8 }]}>
         <TouchableOpacity style={styles.row} onPress={toggleLike} activeOpacity={0.7}>
           <Text style={{ fontSize: 18, color: iLike ? HEART : MUTED }}>
@@ -331,7 +559,6 @@ function PostCard({ item }: { item: ReviewDoc }) {
         </View>
       </View>
 
-      {/* Comments preview */}
       {comments.length > 0 && (
         <View style={{ marginTop: 10, gap: 6 }}>
           {comments.map((c) => (
@@ -342,7 +569,6 @@ function PostCard({ item }: { item: ReviewDoc }) {
         </View>
       )}
 
-      {/* Add comment */}
       <View style={styles.commentBox}>
         <TextInput
           value={commentText}
@@ -388,7 +614,6 @@ function MediaCarousel({ media }: { media: MediaItem[] }) {
 
   return (
     <>
-      {/* Position badges/dots relative to media */}
       <View style={{ position: 'relative' }}>
         <FlatList
           data={media}
@@ -412,7 +637,9 @@ function MediaCarousel({ media }: { media: MediaItem[] }) {
         {/* counter: top-right */}
         <View style={styles.counterWrapRight}>
           <View style={styles.counterBadge}>
-            <Text style={styles.counterText}>{index + 1} / {media.length}</Text>
+            <Text style={styles.counterText}>
+              {index + 1} / {media.length}
+            </Text>
           </View>
         </View>
 
@@ -435,7 +662,9 @@ function MediaCarousel({ media }: { media: MediaItem[] }) {
             <TouchableOpacity onPress={closeViewer} style={styles.closeBtn}>
               <Text style={styles.closeTxt}>✕</Text>
             </TouchableOpacity>
-            <Text style={styles.viewerTitle}>{viewerIndex + 1} / {media.length}</Text>
+            <Text style={styles.viewerTitle}>
+              {viewerIndex + 1} / {media.length}
+            </Text>
             <View style={{ width: 44 }} />
           </View>
 
@@ -499,10 +728,25 @@ function SmartVideo({ uri, playing }: { uri: string; playing: boolean }) {
 /* ================== Styles ================== */
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: BG },
+
+  // Top app header (centered title; logo removed)
+  headerRow: {
+    paddingTop: 12,
+    paddingHorizontal: 16,
+    paddingBottom: 6,
+    backgroundColor: CARD,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderBottomColor: BORDER,
+    borderBottomWidth: 1,
+  },
+  appTitle: { fontSize: 20, fontWeight: '800', color: INK },
+
   statusBar: {
     backgroundColor: CARD,
     paddingHorizontal: 16,
-    paddingTop: 14,
+    paddingTop: 10,
     paddingBottom: 12,
     borderBottomColor: BORDER,
     borderBottomWidth: 1,
@@ -510,6 +754,28 @@ const styles = StyleSheet.create({
   },
   statusTitle: { fontWeight: '800', color: INK },
   statusSub: { color: MUTED, marginTop: 4 },
+
+  // New status composer
+  postBox: {
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 14,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  postInput: { flex: 1, color: INK, paddingVertical: 4 },
+  counter: { fontSize: 12, minWidth: 28, textAlign: 'right' },
+  postBtn: {
+    backgroundColor: PURPLE,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  postBtnText: { color: '#fff', fontWeight: '800' },
 
   card: {
     backgroundColor: CARD,
@@ -596,5 +862,8 @@ const styles = StyleSheet.create({
   viewerImage: { width: '100%', height: '100%' },
 });
 
+
+
+/* =============== timeline page  =============== */
 
 
