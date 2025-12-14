@@ -115,123 +115,124 @@ export default function ExploreScreen() {
         style={[
           styles.chip,
           active && { backgroundColor: ACCENT + '22', borderColor: ACCENT },
-        ]}
+        ]
+}
       >
-        <Text style={[styles.chipText, active && { color: ACCENT }]}>{label}</Text>
-      </TouchableOpacity>
+  <Text style={[styles.chipText, active && { color: ACCENT }]}>{label}</Text>
+      </TouchableOpacity >
     );
   };
 
-  const toReview = (id: string) => router.push(`/review/${id}`);
-  const toProfile = (username?: string) => {
-    if (!username) return;
-    router.push(`/profile/${username}`);
-  };
+const toReview = (id: string) => router.push(`/review/${id}`);
+const toProfile = (username?: string) => {
+  if (!username) return;
+  router.push(`/profile/${username}`);
+};
 
-  /* ---------- Card renderers ---------- */
+/* ---------- Card renderers ---------- */
 
-  // List Card (large image + details)
-  const ListCard = ({ item }: { item: any }) => {
-    const img = item?.media?.[0]?.url;
-    return (
-      <TouchableOpacity style={styles.listCard} onPress={() => toReview(item.id)} activeOpacity={0.9}>
-        {img ? <Image source={{ uri: img }} style={styles.listImage} /> : <View style={styles.listImageFallback} />}
-        <View style={styles.listTextWrap}>
-          <Pressable onPress={() => toProfile(item.username)}>
-            <Text style={styles.handle}>@{item.username}</Text>
-          </Pressable>
-          {!!item.caption && <Text style={styles.caption}>{item.caption}</Text>}
-          <Text style={styles.meta}>
-            {(item.businessName || 'Business')} • {(item.cityState || '—')}
-          </Text>
-          {!!item.serviceType && (
-            <Text style={styles.service}>Service: {item.serviceType}</Text>
-          )}
-        </View>
-      </TouchableOpacity>
-    );
-  };
-
-  // Grid Tile (tight card with overlay text)
-  const GridTile = ({ item }: { item: any }) => {
-    const size = (screenWidth - 24 - 12) / 2; // 12px gutters
-    const img = item?.media?.[0]?.url;
-    return (
-      <TouchableOpacity
-        onPress={() => toReview(item.id)}
-        activeOpacity={0.9}
-        style={[styles.gridTile, { width: size, height: size }]}
-      >
-        {img ? (
-          <Image source={{ uri: img }} style={styles.gridImg} />
-        ) : (
-          <View style={styles.gridImgFallback} />
-        )}
-        <View style={styles.gridOverlay}>
-          <Text numberOfLines={1} style={styles.gridHandle}>@{item.username}</Text>
-          {!!item.serviceType && (
-            <Text numberOfLines={1} style={styles.gridService}>{item.serviceType}</Text>
-          )}
-        </View>
-      </TouchableOpacity>
-    );
-  };
-
+// List Card (large image + details)
+const ListCard = ({ item }: { item: any }) => {
+  const img = item?.media?.[0]?.url;
   return (
-    <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.title}>Explore 🔍</Text>
-        <TouchableOpacity
-          onPress={() => setViewMode((v) => (v === 'list' ? 'grid' : 'list'))}
-          style={styles.viewToggle}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.viewToggleTxt}>{viewMode === 'list' ? 'Grid' : 'List'}</Text>
-        </TouchableOpacity>
+    <TouchableOpacity style={styles.listCard} onPress={() => toReview(item.id)} activeOpacity={0.9}>
+      {img ? <Image source={{ uri: img }} style={styles.listImage} /> : <View style={styles.listImageFallback} />}
+      <View style={styles.listTextWrap}>
+        <Pressable onPress={() => toProfile(item.username)}>
+          <Text style={styles.handle}>@{item.username}</Text>
+        </Pressable>
+        {!!item.caption && <Text style={styles.caption}>{item.caption}</Text>}
+        <Text style={styles.meta}>
+          {(item.businessName || 'Business')} • {(item.cityState || '—')}
+        </Text>
+        {!!item.serviceType && (
+          <Text style={styles.service}>Service: {item.serviceType}</Text>
+        )}
       </View>
+    </TouchableOpacity>
+  );
+};
 
-      <Text style={styles.subtitle}>Browse real experiences from the SlayRated community</Text>
-
-      {/* Search */}
-      <View style={styles.searchWrap}>
-        <Text style={styles.searchIcon}>🔎</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="Search name, @handle, service, or city/state"
-          placeholderTextColor={MUTED}
-          value={userSearch}
-          onChangeText={setUserSearch}
-          returnKeyType="search"
-        />
+// Grid Tile (tight card with overlay text)
+const GridTile = ({ item }: { item: any }) => {
+  const size = (screenWidth - 24 - 12) / 2; // 12px gutters
+  const img = item?.media?.[0]?.url;
+  return (
+    <TouchableOpacity
+      onPress={() => toReview(item.id)}
+      activeOpacity={0.9}
+      style={[styles.gridTile, { width: size, height: size }]}
+    >
+      {img ? (
+        <Image source={{ uri: img }} style={styles.gridImg} />
+      ) : (
+        <View style={styles.gridImgFallback} />
+      )}
+      <View style={styles.gridOverlay}>
+        <Text numberOfLines={1} style={styles.gridHandle}>@{item.username}</Text>
+        {!!item.serviceType && (
+          <Text numberOfLines={1} style={styles.gridService}>{item.serviceType}</Text>
+        )}
       </View>
+    </TouchableOpacity>
+  );
+};
 
-      {/* Filter chips */}
-      <View style={styles.chipsRow}>
-        {['Nearby', 'Top Rated', 'Deals', 'Open Now'].map(renderChip)}
-      </View>
+return (
+  <View style={styles.container}>
+    {/* Header */}
+    <View style={styles.header}>
+      <Text style={styles.title}>Explore 🔍</Text>
+      <TouchableOpacity
+        onPress={() => setViewMode((v) => (v === 'list' ? 'grid' : 'list'))}
+        style={styles.viewToggle}
+        activeOpacity={0.8}
+      >
+        <Text style={styles.viewToggleTxt}>{viewMode === 'list' ? 'Grid' : 'List'}</Text>
+      </TouchableOpacity>
+    </View>
 
-      {/* List/Grid */}
-      <FlatList
-        data={filteredReviews}
-        key={viewMode} // force layout recalculation when mode changes
-        keyExtractor={(item) => item.id}
-        numColumns={viewMode === 'grid' ? 2 : 1}
-        columnWrapperStyle={viewMode === 'grid' ? { gap: 12, paddingHorizontal: 12 } : undefined}
-        contentContainerStyle={{ paddingBottom: 100, paddingHorizontal: viewMode === 'list' ? 12 : 0 }}
-        renderItem={({ item }) =>
-          viewMode === 'grid' ? <GridTile item={item} /> : <ListCard item={item} />
-        }
-        ListEmptyComponent={
-          !loading ? (
-            <View style={{ alignItems: 'center', marginTop: 40 }}>
-              <Text style={{ color: MUTED }}>No results yet—try a different search or filters.</Text>
-            </View>
-          ) : null
-        }
+    <Text style={styles.subtitle}>Browse real experiences from the SlayRated community</Text>
+
+    {/* Search */}
+    <View style={styles.searchWrap}>
+      <Text style={styles.searchIcon}>🔎</Text>
+      <TextInput
+        style={styles.input}
+        placeholder="Search name, @handle, service, or city/state"
+        placeholderTextColor={MUTED}
+        value={userSearch}
+        onChangeText={setUserSearch}
+        returnKeyType="search"
       />
     </View>
-  );
+
+    {/* Filter chips */}
+    <View style={styles.chipsRow}>
+      {['Nearby', 'Top Rated', 'Deals', 'Open Now'].map(renderChip)}
+    </View>
+
+    {/* List/Grid */}
+    <FlatList
+      data={filteredReviews}
+      key={viewMode} // force layout recalculation when mode changes
+      keyExtractor={(item) => item.id}
+      numColumns={viewMode === 'grid' ? 2 : 1}
+      columnWrapperStyle={viewMode === 'grid' ? { gap: 12, paddingHorizontal: 12 } : undefined}
+      contentContainerStyle={{ paddingBottom: 100, paddingHorizontal: viewMode === 'list' ? 12 : 0 }}
+      renderItem={({ item }) =>
+        viewMode === 'grid' ? <GridTile item={item} /> : <ListCard item={item} />
+      }
+      ListEmptyComponent={
+        !loading ? (
+          <View style={{ alignItems: 'center', marginTop: 40 }}>
+            <Text style={{ color: MUTED }}>No results yet—try a different search or filters.</Text>
+          </View>
+        ) : null
+      }
+    />
+  </View>
+);
 }
 
 /* ============== Styles ============== */
