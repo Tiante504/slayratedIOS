@@ -1,23 +1,22 @@
 import { db } from '@/firebase/firebaseConfig';
 import { Video } from 'expo-av';
+import { LinearGradient } from 'expo-linear-gradient';
 import { getAuth } from 'firebase/auth';
 import {
   addDoc,
-  collection,
-  deleteDoc,
-  doc,
-  getDoc,
+  collection, deleteDoc, doc, getDoc,
   limit,
   onSnapshot,
   orderBy,
   query,
   serverTimestamp,
   setDoc,
-  Timestamp,
+  Timestamp
 } from 'firebase/firestore';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Dimensions,
   FlatList,
   Image,
@@ -27,10 +26,8 @@ import {
   StatusBar,
   StyleSheet,
   Text,
-  TextInput,
-  TouchableOpacity,
-  useWindowDimensions,
-  View,
+  TextInput, TouchableOpacity, useWindowDimensions,
+  View
 } from 'react-native';
 
 /* ================== Types ================== */
@@ -75,17 +72,29 @@ type FeedItem =
   | { type: 'status'; createdAt: any; data: StatusDoc };
 
 /* =============== Theme tokens =============== */
-const BG = '#f7f6fb';
-const CARD = '#fff';
+
+// background gradient (fixed behind everything)
+const GRADIENT_TOP = '#F77A2C';    // rich orange
+const GRADIENT_MID = '#FF7AAE';    // soft pink
+const GRADIENT_BOTTOM = '#3A7BFF'; // blue
+
+const CARD = '#FFFFFF';
 const INK = '#0E0E0E';
 const MUTED = '#6B6B6B';
-const BORDER = '#eee1f0';
-const ACCENT = '#6E56CF'; // deep brand purple
-const SOFT = '#e6dffa';
-const HEART = '#ff6aa2';
+
+// lighter, more neutral borders
+const BORDER = 'rgba(0,0,0,0.06)';
+
+// primary action color (Post button / links)
+const ACCENT = '#3A7BFF'; // royal blue
+
+// softer color for inactive stars etc.
+const SOFT = 'rgba(0,0,0,0.18)';
+
+// like heart stays pink
+const HEART = '#E066B3';
 const BLACK = '#000';
 const LIME = '#E5FFCC';
-const PURPLE = '#B266FF';
 
 /* =============== Simple user cache (avatar/username) =============== */
 const userCache = new Map<string, { avatar?: string; username?: string }>();
@@ -166,7 +175,14 @@ function renderStars(n: number) {
   const stars = Array.from({ length: 5 }).map((_, i) => {
     const active = i < n;
     return (
-      <Text key={i} style={{ fontSize: 16, color: active ? ACCENT : SOFT, marginLeft: 2 }}>
+      <Text
+        key={i}
+        style={{
+          fontSize: 16,
+          color: active ? ACCENT : SOFT,
+          marginLeft: 2,
+        }}
+      >
         ★
       </Text>
     );
@@ -187,8 +203,16 @@ export default function Home() {
   useEffect(() => {
     setLoading(true);
 
-    const revQ = query(collection(db, 'reviews'), orderBy('createdAt', 'desc'), limit(50));
-    const statQ = query(collection(db, 'statuses'), orderBy('createdAt', 'desc'), limit(50));
+    const revQ = query(
+      collection(db, 'reviews'),
+      orderBy('createdAt', 'desc'),
+      limit(50)
+    );
+    const statQ = query(
+      collection(db, 'statuses'),
+      orderBy('createdAt', 'desc'),
+      limit(50)
+    );
 
     let reviews: FeedItem[] = [];
     let statuses: FeedItem[] = [];
@@ -206,7 +230,11 @@ export default function Home() {
       (snap) => {
         reviews = snap.docs.map((d) => {
           const data = { id: d.id, ...(d.data() as any) } as ReviewDoc;
-          return { type: 'review', createdAt: (data as any).createdAt ?? new Date(), data };
+          return {
+            type: 'review',
+            createdAt: (data as any).createdAt ?? new Date(),
+            data,
+          };
         });
         apply();
       },
@@ -221,7 +249,11 @@ export default function Home() {
       (snap) => {
         statuses = snap.docs.map((d) => {
           const data = { id: d.id, ...(d.data() as any) } as StatusDoc;
-          return { type: 'status', createdAt: (data as any).createdAt ?? new Date(), data };
+          return {
+            type: 'status',
+            createdAt: (data as any).createdAt ?? new Date(),
+            data,
+          };
         });
         apply();
       },
@@ -257,70 +289,90 @@ export default function Home() {
   };
 
   return (
-    <View style={styles.container}>
-
-      {/* ===== Intro and status composer ===== */}
-      <View style={styles.statusBar}>
-        <Text style={styles.statusTitle}>Share your latest beauty experience ✨</Text>
-        <Text style={styles.statusSub}>Post photos, a quick video, and your honest rating.</Text>
-
-        {/* Status composer */}
-        <View style={styles.postBox}>
-          <TextInput
-            value={statusText}
-            onChangeText={setStatusText}
-            maxLength={150}
-            placeholder="Ask for appointments, share updates… (150 chars)"
-            placeholderTextColor={MUTED}
-            style={styles.postInput}
-            returnKeyType="send"
-            onSubmitEditing={postStatus}
-          />
-          <Text style={[styles.counter, { color: remaining < 15 ? ACCENT : MUTED }]}>
-            {remaining}
+    <LinearGradient
+      colors={[GRADIENT_TOP, GRADIENT_MID, GRADIENT_BOTTOM]}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 0, y: 1 }}
+      style={styles.gradient}
+    >
+      <View style={styles.container}>
+        {/* ===== Intro and status composer ===== */}
+        <View style={styles.statusBar}>
+          <Text style={styles.statusTitle}>
+            Share your latest beauty experience ✨
           </Text>
-          <TouchableOpacity
-            onPress={postStatus}
-            activeOpacity={0.85}
-            style={[styles.postBtn, !statusText.trim() && { opacity: 0.5 }]}
-            disabled={!statusText.trim()}
-          >
-            <Text style={styles.postBtnText}>Post</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
+          <Text style={styles.statusSub}>
+            Post photos, a quick video, and your honest rating.
+          </Text>
 
-      {/* ===== Feed (reviews + statuses merged) ===== */}
-      {loading ? (
-        <View style={[styles.container, { alignItems: 'center', justifyContent: 'center' }]}>
-          <ActivityIndicator />
+          {/* Status composer */}
+          <View style={styles.postBox}>
+            <TextInput
+              value={statusText}
+              onChangeText={setStatusText}
+              maxLength={150}
+              placeholder="Ask for appointments, share updates… (150 chars)"
+              placeholderTextColor={MUTED}
+              style={styles.postInput}
+              returnKeyType="send"
+              onSubmitEditing={postStatus}
+            />
+            <Text
+              style={[
+                styles.counter,
+                { color: remaining < 15 ? ACCENT : MUTED },
+              ]}
+            >
+              {remaining}
+            </Text>
+            <TouchableOpacity
+              onPress={postStatus}
+              activeOpacity={0.85}
+              style={[styles.postBtn, !statusText.trim() && { opacity: 0.5 }]}
+              disabled={!statusText.trim()}
+            >
+              <Text style={styles.postBtnText}>Post</Text>
+            </TouchableOpacity>
+          </View>
         </View>
-      ) : (
-        <FlatList
-          data={feed}
-          keyExtractor={(it, idx) =>
-            (it.type === 'review'
-              ? `r-${(it.data as ReviewDoc).id}`
-              : `s-${(it.data as StatusDoc).id}`) || String(idx)
-          }
-          renderItem={({ item }) =>
-            item.type === 'review' ? (
-              <PostCard item={item.data as ReviewDoc} />
-            ) : (
-              <StatusCard item={item.data as StatusDoc} />
-            )
-          }
-          contentContainerStyle={{ paddingBottom: 80 }}
-          ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
-          ListEmptyComponent={
-            <View style={{ alignItems: 'center', marginTop: 40 }}>
-              <Text style={{ color: MUTED }}>No posts yet.</Text>
-            </View>
-          }
-          style={{ paddingHorizontal: 12 }}
-        />
-      )}
-    </View>
+
+        {/* ===== Feed (reviews + statuses merged) ===== */}
+        {loading ? (
+          <View
+            style={[
+              styles.container,
+              { alignItems: 'center', justifyContent: 'center' },
+            ]}
+          >
+            <ActivityIndicator />
+          </View>
+        ) : (
+          <FlatList
+            data={feed}
+            keyExtractor={(it, idx) =>
+              (it.type === 'review'
+                ? `r-${(it.data as ReviewDoc).id}`
+                : `s-${(it.data as StatusDoc).id}`) || String(idx)
+            }
+            renderItem={({ item }) =>
+              item.type === 'review' ? (
+                <PostCard item={item.data as ReviewDoc} />
+              ) : (
+                <StatusCard item={item.data as StatusDoc} />
+              )
+            }
+            contentContainerStyle={{ paddingBottom: 80 }}
+            ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
+            ListEmptyComponent={
+              <View style={{ alignItems: 'center', marginTop: 40 }}>
+                <Text style={{ color: MUTED }}>No posts yet.</Text>
+              </View>
+            }
+            style={{ paddingHorizontal: 12 }}
+          />
+        )}
+      </View>
+    </LinearGradient>
   );
 }
 
@@ -350,7 +402,9 @@ function StatusCard({ item }: { item: StatusDoc }) {
     else await setDoc(likeRef, { userId: uid, createdAt: serverTimestamp() });
   };
 
-  const [comments, setComments] = useState<{ id: string; text: string; username?: string }[]>([]);
+  const [comments, setComments] = useState<
+    { id: string; text: string; username?: string }[]
+  >([]);
   const [commentText, setCommentText] = useState('');
   useEffect(() => {
     const commentsRef = query(
@@ -361,7 +415,11 @@ function StatusCard({ item }: { item: StatusDoc }) {
     const unsub = onSnapshot(commentsRef, (snap) => {
       const rows = snap.docs.map((d) => {
         const data = d.data() as any;
-        return { id: d.id, text: data.text ?? '', username: data.username ?? 'user' };
+        return {
+          id: d.id,
+          text: data.text ?? '',
+          username: data.username ?? 'user',
+        };
       });
       setComments(rows);
     });
@@ -399,8 +457,14 @@ function StatusCard({ item }: { item: StatusDoc }) {
       <Text style={[styles.caption, { marginTop: 6 }]}>{item.text}</Text>
 
       <View style={[styles.rowBetween, { marginTop: 10 }]}>
-        <TouchableOpacity style={styles.row} onPress={toggleLike} activeOpacity={0.7}>
-          <Text style={{ fontSize: 18, color: iLike ? HEART : MUTED }}>
+        <TouchableOpacity
+          style={styles.row}
+          onPress={toggleLike}
+          activeOpacity={0.7}
+        >
+          <Text
+            style={{ fontSize: 18, color: iLike ? HEART : MUTED }}
+          >
             {iLike ? '♥' : '♡'}
           </Text>
           <Text style={[styles.muted, { marginLeft: 6 }]}>{likeCount}</Text>
@@ -414,7 +478,10 @@ function StatusCard({ item }: { item: StatusDoc }) {
         <View style={{ marginTop: 10, gap: 6 }}>
           {comments.map((c) => (
             <Text key={c.id} style={{ color: INK }}>
-              <Text style={{ fontWeight: '700' }}>@{c.username ?? 'user'}</Text> {c.text}
+              <Text style={{ fontWeight: '700' }}>
+                @{c.username ?? 'user'}
+              </Text>{' '}
+              {c.text}
             </Text>
           ))}
         </View>
@@ -439,11 +506,34 @@ function StatusCard({ item }: { item: StatusDoc }) {
 }
 
 /* =============== Post Card (reviews) =============== */
+/* =============== Post Card (reviews) =============== */
 function PostCard({ item }: { item: ReviewDoc }) {
   const auth = getAuth();
   const uid = auth.currentUser?.uid ?? 'anon';
   const date = tsToDate(item.createdAt);
   const ago = formatTimeAgo(date);
+
+  // DELETE confirmation
+  const handleDelete = () => {
+    Alert.alert(
+      "Delete Post",
+      "Are you sure you want to delete this post?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await deleteDoc(doc(db, 'reviews', item.id));
+            } catch (err) {
+              console.error("Delete failed:", err);
+            }
+          }
+        }
+      ]
+    );
+  };
 
   const [avatarUrl, setAvatarUrl] = useState<string | undefined>(item.userAvatar);
   useEffect(() => {
@@ -483,7 +573,9 @@ function PostCard({ item }: { item: ReviewDoc }) {
     else await setDoc(likeRef, { userId: uid, createdAt: serverTimestamp() });
   };
 
-  const [comments, setComments] = useState<{ id: string; text: string; username?: string }[]>([]);
+  const [comments, setComments] = useState<
+    { id: string; text: string; username?: string }[]
+  >([]);
   const [commentText, setCommentText] = useState('');
   useEffect(() => {
     const commentsRef = query(
@@ -494,7 +586,11 @@ function PostCard({ item }: { item: ReviewDoc }) {
     const unsub = onSnapshot(commentsRef, (snap) => {
       const rows = snap.docs.map((d) => {
         const data = d.data() as any;
-        return { id: d.id, text: data.text ?? '', username: data.username ?? 'user' };
+        return {
+          id: d.id,
+          text: data.text ?? '',
+          username: data.username ?? 'user',
+        };
       });
       setComments(rows);
     });
@@ -517,6 +613,8 @@ function PostCard({ item }: { item: ReviewDoc }) {
 
   return (
     <View style={styles.card}>
+
+      {/* ===== TOP ROW (Avatar + Username + Delete Button) ===== */}
       <View style={styles.rowBetween}>
         <View style={styles.row}>
           {avatarUrl ? (
@@ -533,8 +631,16 @@ function PostCard({ item }: { item: ReviewDoc }) {
             </Text>
           </View>
         </View>
+
+        {/* DELETE BUTTON (only shows for the post owner) */}
+        {item.userId === uid && (
+          <TouchableOpacity onPress={handleDelete}>
+            <Text style={{ color: 'red', fontWeight: '700' }}>Delete</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
+      {/* ===== MEDIA CAROUSEL ===== */}
       <MediaCarousel media={media} />
 
       {!!item.caption && <Text style={styles.caption}>{item.caption}</Text>}
@@ -547,23 +653,31 @@ function PostCard({ item }: { item: ReviewDoc }) {
         <View style={styles.row}>{renderStars(item.rating ?? 0)}</View>
       </View>
 
+      {/* Likes + comments */}
       <View style={[styles.rowBetween, { marginTop: 8 }]}>
-        <TouchableOpacity style={styles.row} onPress={toggleLike} activeOpacity={0.7}>
-          <Text style={{ fontSize: 18, color: iLike ? HEART : MUTED }}>
+        <TouchableOpacity
+          style={styles.row}
+          onPress={toggleLike}
+          activeOpacity={0.7}
+        >
+          <Text
+            style={{ fontSize: 18, color: iLike ? HEART : MUTED }}
+          >
             {iLike ? '♥' : '♡'}
           </Text>
           <Text style={[styles.muted, { marginLeft: 6 }]}>{likeCount}</Text>
         </TouchableOpacity>
-        <View style={styles.row}>
-          <Text style={[styles.muted]}>{comments.length} comments</Text>
-        </View>
+        <Text style={[styles.muted]}>{comments.length} comments</Text>
       </View>
 
       {comments.length > 0 && (
         <View style={{ marginTop: 10, gap: 6 }}>
           {comments.map((c) => (
             <Text key={c.id} style={{ color: INK }}>
-              <Text style={{ fontWeight: '700' }}>@{c.username ?? 'user'}</Text> {c.text}
+              <Text style={{ fontWeight: '700' }}>
+                @{c.username ?? 'user'}
+              </Text>{' '}
+              {c.text}
             </Text>
           ))}
         </View>
@@ -586,6 +700,7 @@ function PostCard({ item }: { item: ReviewDoc }) {
     </View>
   );
 }
+
 
 /* =============== Media Carousel + Fullscreen Viewer =============== */
 function MediaCarousel({ media }: { media: MediaItem[] }) {
@@ -648,7 +763,10 @@ function MediaCarousel({ media }: { media: MediaItem[] }) {
           <View style={styles.dotsBottomCenter}>
             <View style={{ flexDirection: 'row', gap: 6 }}>
               {media.map((_, i) => (
-                <View key={i} style={[styles.dot, i === index && styles.dotActive]} />
+                <View
+                  key={i}
+                  style={[styles.dot, i === index && styles.dotActive]}
+                />
               ))}
             </View>
           </View>
@@ -727,41 +845,46 @@ function SmartVideo({ uri, playing }: { uri: string; playing: boolean }) {
 
 /* ================== Styles ================== */
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: BG },
-
-  // Top app header (centered title; logo removed)
-  headerRow: {
-    paddingTop: 12,
-    paddingHorizontal: 16,
-    paddingBottom: 6,
-    backgroundColor: CARD,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderBottomColor: BORDER,
-    borderBottomWidth: 1,
+  gradient: {
+    flex: 1,
   },
-  appTitle: { fontSize: 20, fontWeight: '800', color: INK },
+  container: {
+    flex: 1,
+  },
 
+  // Top section (title + composer)
   statusBar: {
-    backgroundColor: CARD,
-    paddingHorizontal: 16,
-    paddingTop: 10,
-    paddingBottom: 12,
-    borderBottomColor: BORDER,
-    borderBottomWidth: 1,
+    marginHorizontal: 12,
+    marginTop: 12,
     marginBottom: 8,
+
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+
+    borderRadius: 20,
+
+    // frosted glass effect (fake blur)
+    backgroundColor: 'rgba(255,255,255,0.82)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.65)',
+
+    shadowColor: '#000',
+    shadowOpacity: 0.10,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 },
   },
-  statusTitle: { fontWeight: '800', color: INK },
-  statusSub: { color: MUTED, marginTop: 4 },
+
+  statusTitle: { fontWeight: '800', color: INK, fontSize: 16 },
+  statusSub: { color: MUTED, marginTop: 4, fontSize: 13 },
 
   // New status composer
   postBox: {
     marginTop: 10,
     borderWidth: 1,
-    borderColor: BORDER,
-    borderRadius: 14,
-    paddingHorizontal: 10,
+    borderColor: 'rgb(0, 0, 0)',
+    backgroundColor: 'rgba(255,255,255,0.95)',
+    borderRadius: 999, // pill shape
+    paddingHorizontal: 14,
     paddingVertical: 8,
     flexDirection: 'row',
     alignItems: 'center',
@@ -769,40 +892,60 @@ const styles = StyleSheet.create({
   },
   postInput: { flex: 1, color: INK, paddingVertical: 4 },
   counter: { fontSize: 12, minWidth: 28, textAlign: 'right' },
+
+  // solid royal blue Post button
   postBtn: {
-    backgroundColor: PURPLE,
-    borderRadius: 10,
-    paddingHorizontal: 14,
+    backgroundColor: ACCENT,
+    borderRadius: 999,
+    paddingHorizontal: 16,
     paddingVertical: 8,
   },
   postBtnText: { color: '#fff', fontWeight: '800' },
 
   card: {
-    backgroundColor: CARD,
-    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.50)',
+    borderRadius: 18,
     padding: 12,
+    borderWidth: 1,
+    borderColor: 'rgb(12, 0, 0)',
     shadowColor: '#000',
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 2,
+    shadowOpacity: 0.12,
+    shadowRadius: 22,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 3,
   },
   row: { flexDirection: 'row', alignItems: 'center' },
-  rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  rowBetween: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
 
-  avatar: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#ddd', marginRight: 10 },
-  avatarImg: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#ddd', marginRight: 10 },
+  avatar: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#ddd',
+    marginRight: 10,
+  },
+  avatarImg: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#ddd',
+    marginRight: 10,
+  },
 
   username: { fontWeight: '800', color: INK },
   subtle: { color: MUTED, fontSize: 12, marginTop: 2 },
 
-  photo: { width: '100%', height: 260, borderRadius: 12, marginTop: 10 },
+  photo: { width: '100%', height: 260, borderRadius: 14, marginTop: 10 },
   caption: { marginTop: 10, color: INK },
 
   footer: {
     marginTop: 10,
     borderTopWidth: 1,
-    borderTopColor: BORDER,
+    borderTopColor: 'rgba(0,0,0,0.06)',
     paddingTop: 10,
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -813,19 +956,25 @@ const styles = StyleSheet.create({
   commentBox: {
     marginTop: 10,
     borderWidth: 1,
-    borderColor: BORDER,
-    borderRadius: 10,
+    borderColor: 'rgb(0, 0, 0)',
+    borderRadius: 12,
     paddingHorizontal: 10,
     paddingVertical: 8,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
+    backgroundColor: '#fafafa',
   },
   input: { flex: 1, color: INK, paddingVertical: 4 },
 
   // counter top-right over media
   counterWrapRight: { position: 'absolute', top: 12, right: 12 },
-  counterBadge: { backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 12, paddingHorizontal: 8, paddingVertical: 2 },
+  counterBadge: {
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
   counterText: { color: '#fff', fontWeight: '800', fontSize: 12 },
 
   // dots bottom-center
@@ -837,7 +986,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.5)' },
+  dot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: 'rgba(255,255,255,0.5)',
+  },
   dotActive: { backgroundColor: '#fff', width: 14, borderRadius: 7 },
 
   // fullscreen viewer
@@ -851,7 +1005,12 @@ const styles = StyleSheet.create({
     paddingBottom: 4,
   },
   viewerTitle: { color: '#fff', fontWeight: '800' },
-  closeBtn: { width: 44, height: 36, alignItems: 'center', justifyContent: 'center' },
+  closeBtn: {
+    width: 44,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   closeTxt: { color: '#fff', fontSize: 20, fontWeight: '900' },
   viewerSlide: {
     width: Dimensions.get('window').width,
@@ -862,8 +1021,7 @@ const styles = StyleSheet.create({
   viewerImage: { width: '100%', height: '100%' },
 });
 
-
-
 /* =============== timeline page  =============== */
+
 
 
