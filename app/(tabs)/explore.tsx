@@ -18,11 +18,11 @@ import {
 } from 'react-native';
 
 /* ============== Theme ============== */
-const BG = '#f7f6fb';
-const CARD = '#ffffff';
-const INK = '#0E0E0E';
-const MUTED = '#6B6B6B';
-const BORDER = '#eee1f0';
+const BG = '#000000';
+const CARD = '#0F0F0F';
+const INK = '#F5F5F5';
+const MUTED = '#9AA0A6';
+const BORDER = '#1F1F1F';
 const ACCENT = '#B266FF'; // primary purple
 const LIME = '#E5FFCC';   // soft lime accent
 
@@ -259,7 +259,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#d8f5bf',
   },
-  viewToggleTxt: { color: INK, fontWeight: '700' },
+  viewToggleTxt: { color: '#0E0E0E', fontWeight: '700' },
 
   subtitle: {
     color: MUTED,
@@ -297,7 +297,7 @@ const styles = StyleSheet.create({
   chip: {
     paddingHorizontal: 12,
     paddingVertical: 6,
-    backgroundColor: '#fff',
+    backgroundColor: CARD,
     borderRadius: 999,
     borderWidth: 1,
     borderColor: BORDER,
@@ -373,5 +373,3 @@ const styles = StyleSheet.create({
 // It includes a search bar to filter reviews by business name, username, service type, or city/state
 // Tapping on a review opens the full review details, and tapping on a username
 // opens the user's profile page
-
-

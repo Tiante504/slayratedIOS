@@ -4,14 +4,17 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { getAuth } from 'firebase/auth';
 import {
   addDoc,
-  collection, deleteDoc, doc, getDoc,
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
   limit,
   onSnapshot,
   orderBy,
   query,
   serverTimestamp,
   setDoc,
-  Timestamp
+  Timestamp,
 } from 'firebase/firestore';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -26,8 +29,10 @@ import {
   StatusBar,
   StyleSheet,
   Text,
-  TextInput, TouchableOpacity, useWindowDimensions,
-  View
+  TextInput,
+  TouchableOpacity,
+  useWindowDimensions,
+  View,
 } from 'react-native';
 
 /* ================== Types ================== */
@@ -74,9 +79,9 @@ type FeedItem =
 /* =============== Theme tokens =============== */
 
 // background gradient (fixed behind everything)
-const GRADIENT_TOP = '#F77A2C';    // rich orange
-const GRADIENT_MID = '#FF7AAE';    // soft pink
-const GRADIENT_BOTTOM = '#3A7BFF'; // blue
+const GRADIENT_TOP = '#000000';
+const GRADIENT_MID = '#000000';
+const GRADIENT_BOTTOM = '#000000';
 
 const CARD = '#FFFFFF';
 const INK = '#0E0E0E';
@@ -94,7 +99,6 @@ const SOFT = 'rgba(0,0,0,0.18)';
 // like heart stays pink
 const HEART = '#E066B3';
 const BLACK = '#000';
-const LIME = '#E5FFCC';
 
 /* =============== Simple user cache (avatar/username) =============== */
 const userCache = new Map<string, { avatar?: string; username?: string }>();
@@ -462,9 +466,7 @@ function StatusCard({ item }: { item: StatusDoc }) {
           onPress={toggleLike}
           activeOpacity={0.7}
         >
-          <Text
-            style={{ fontSize: 18, color: iLike ? HEART : MUTED }}
-          >
+          <Text style={{ fontSize: 18, color: iLike ? HEART : MUTED }}>
             {iLike ? '♥' : '♡'}
           </Text>
           <Text style={[styles.muted, { marginLeft: 6 }]}>{likeCount}</Text>
@@ -506,33 +508,30 @@ function StatusCard({ item }: { item: StatusDoc }) {
 }
 
 /* =============== Post Card (reviews) =============== */
-/* =============== Post Card (reviews) =============== */
 function PostCard({ item }: { item: ReviewDoc }) {
   const auth = getAuth();
   const uid = auth.currentUser?.uid ?? 'anon';
+  const isOwner = item.userId === uid;
   const date = tsToDate(item.createdAt);
   const ago = formatTimeAgo(date);
 
-  // DELETE confirmation
+  // DELETE confirmation (owner only)
   const handleDelete = () => {
-    Alert.alert(
-      "Delete Post",
-      "Are you sure you want to delete this post?",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              await deleteDoc(doc(db, 'reviews', item.id));
-            } catch (err) {
-              console.error("Delete failed:", err);
-            }
+    Alert.alert('Delete Post', 'Are you sure you want to delete this post?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await deleteDoc(doc(db, 'reviews', item.id));
+          } catch (err) {
+            console.error('Delete failed:', err);
+            Alert.alert('Error', 'Could not delete this post. Try again.');
           }
-        }
-      ]
-    );
+        },
+      },
+    ]);
   };
 
   const [avatarUrl, setAvatarUrl] = useState<string | undefined>(item.userAvatar);
@@ -548,7 +547,10 @@ function PostCard({ item }: { item: ReviewDoc }) {
         const snap = await getDoc(doc(db, 'users', item.userId));
         const data = snap.exists() ? (snap.data() as any) : null;
         if (data?.avatar) {
-          userCache.set(item.userId, { avatar: data.avatar, username: data?.username });
+          userCache.set(item.userId, {
+            avatar: data.avatar,
+            username: data?.username,
+          });
           setAvatarUrl(data.avatar);
         }
       } catch { }
@@ -573,10 +575,14 @@ function PostCard({ item }: { item: ReviewDoc }) {
     else await setDoc(likeRef, { userId: uid, createdAt: serverTimestamp() });
   };
 
+  // ===== Community feedback (comment + rating) =====
   const [comments, setComments] = useState<
-    { id: string; text: string; username?: string }[]
+    { id: string; text: string; username?: string; rating?: number }[]
   >([]);
-  const [commentText, setCommentText] = useState('');
+  const [communityAvg, setCommunityAvg] = useState<number | null>(null);
+  const [communityCount, setCommunityCount] = useState(0);
+
+  // “preview” comments (latest 2)
   useEffect(() => {
     const commentsRef = query(
       collection(db, 'reviews', item.id, 'comments'),
@@ -590,6 +596,7 @@ function PostCard({ item }: { item: ReviewDoc }) {
           id: d.id,
           text: data.text ?? '',
           username: data.username ?? 'user',
+          rating: typeof data.rating === 'number' ? data.rating : undefined,
         };
       });
       setComments(rows);
@@ -597,23 +604,80 @@ function PostCard({ item }: { item: ReviewDoc }) {
     return unsub;
   }, [item.id]);
 
-  const addComment = async () => {
-    const text = commentText.trim();
-    if (!text) return;
-    setCommentText('');
-    await addDoc(collection(db, 'reviews', item.id, 'comments'), {
-      userId: uid,
-      username: auth.currentUser?.email?.split('@')[0] ?? 'user',
-      text,
-      createdAt: serverTimestamp(),
+  // compute community rating from recent feedback docs (up to 200)
+  useEffect(() => {
+    const allRef = query(
+      collection(db, 'reviews', item.id, 'comments'),
+      orderBy('createdAt', 'desc'),
+      limit(200)
+    );
+    const unsub = onSnapshot(allRef, (snap) => {
+      let sum = 0;
+      let count = 0;
+      snap.docs.forEach((d) => {
+        const data = d.data() as any;
+        if (typeof data.rating === 'number' && data.rating >= 1 && data.rating <= 5) {
+          sum += data.rating;
+          count += 1;
+        }
+      });
+      setCommunityCount(count);
+      setCommunityAvg(count ? Math.round((sum / count) * 10) / 10 : null);
     });
+    return unsub;
+  }, [item.id]);
+
+  // modal state
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [draftText, setDraftText] = useState('');
+  const [draftRating, setDraftRating] = useState(0);
+
+  const openFeedback = () => {
+    if (isOwner) {
+      Alert.alert("Not allowed", "You can’t rate/comment on your own post.");
+      return;
+    }
+    setDraftText('');
+    setDraftRating(0);
+    setFeedbackOpen(true);
+  };
+
+  const submitFeedback = async () => {
+    if (isOwner) {
+      Alert.alert("Not allowed", "You can’t rate/comment on your own post.");
+      return;
+    }
+
+    const text = draftText.trim();
+    if (!text) {
+      Alert.alert('Missing comment', 'Write a comment before posting.');
+      return;
+    }
+    if (draftRating < 1 || draftRating > 5) {
+      Alert.alert('Missing rating', 'Tap 1–5 stars to rate this post.');
+      return;
+    }
+
+    try {
+      setFeedbackOpen(false);
+      await addDoc(collection(db, 'reviews', item.id, 'comments'), {
+        userId: uid,
+        username: auth.currentUser?.email?.split('@')[0] ?? 'user',
+        text,
+        rating: draftRating,
+        createdAt: serverTimestamp(),
+      });
+    } catch (err) {
+      console.error('submitFeedback failed', err);
+      Alert.alert('Error', 'Could not post your feedback. Try again.');
+      setFeedbackOpen(true);
+    }
   };
 
   const media = normalizeMedia(item.media);
 
   return (
     <View style={styles.card}>
-
       {/* ===== TOP ROW (Avatar + Username + Delete Button) ===== */}
       <View style={styles.rowBetween}>
         <View style={styles.row}>
@@ -634,8 +698,8 @@ function PostCard({ item }: { item: ReviewDoc }) {
 
         {/* DELETE BUTTON (only shows for the post owner) */}
         {item.userId === uid && (
-          <TouchableOpacity onPress={handleDelete}>
-            <Text style={{ color: 'red', fontWeight: '700' }}>Delete</Text>
+          <TouchableOpacity onPress={handleDelete} activeOpacity={0.8}>
+            <Text style={{ color: '#B00020', fontWeight: '800' }}>Delete</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -645,6 +709,7 @@ function PostCard({ item }: { item: ReviewDoc }) {
 
       {!!item.caption && <Text style={styles.caption}>{item.caption}</Text>}
 
+      {/* business + original poster rating */}
       <View style={styles.footer}>
         <Text style={styles.muted}>
           {item.business}
@@ -653,54 +718,131 @@ function PostCard({ item }: { item: ReviewDoc }) {
         <View style={styles.row}>{renderStars(item.rating ?? 0)}</View>
       </View>
 
-      {/* Likes + comments */}
+      {/* Community rating (avg) */}
+      <View style={[styles.rowBetween, { marginTop: 10 }]}>
+        <View style={styles.row}>
+          <Text style={[styles.muted, { fontWeight: '800' }]}>Community:</Text>
+          <Text style={[styles.muted, { marginLeft: 6 }]}>
+            {communityAvg == null ? '—' : `${communityAvg}★`}
+          </Text>
+          <Text style={[styles.muted, { marginLeft: 6 }]}>
+            ({communityCount})
+          </Text>
+        </View>
+
+        {/* “Rate + Comment” opens big modal */}
+        {!isOwner ? (
+          <TouchableOpacity onPress={openFeedback} activeOpacity={0.8}>
+            <Text style={{ color: ACCENT, fontWeight: '900' }}>Rate + Comment</Text>
+          </TouchableOpacity>
+        ) : (
+          <Text style={{ color: MUTED, fontWeight: '800' }}>Your post</Text>
+        )}
+      </View>
+
+      {/* Likes + comments count */}
       <View style={[styles.rowBetween, { marginTop: 8 }]}>
         <TouchableOpacity
           style={styles.row}
           onPress={toggleLike}
           activeOpacity={0.7}
         >
-          <Text
-            style={{ fontSize: 18, color: iLike ? HEART : MUTED }}
-          >
+          <Text style={{ fontSize: 18, color: iLike ? HEART : MUTED }}>
             {iLike ? '♥' : '♡'}
           </Text>
           <Text style={[styles.muted, { marginLeft: 6 }]}>{likeCount}</Text>
         </TouchableOpacity>
+
         <Text style={[styles.muted]}>{comments.length} comments</Text>
       </View>
 
+      {/* Preview latest comments */}
       {comments.length > 0 && (
         <View style={{ marginTop: 10, gap: 6 }}>
           {comments.map((c) => (
             <Text key={c.id} style={{ color: INK }}>
-              <Text style={{ fontWeight: '700' }}>
-                @{c.username ?? 'user'}
-              </Text>{' '}
+              <Text style={{ fontWeight: '800' }}>@{c.username ?? 'user'}</Text>{' '}
+              {typeof c.rating === 'number' ? (
+                <Text style={{ color: MUTED }}>({c.rating}★) </Text>
+              ) : null}
               {c.text}
             </Text>
           ))}
         </View>
       )}
 
-      <View style={styles.commentBox}>
-        <TextInput
-          value={commentText}
-          onChangeText={setCommentText}
-          placeholder={'Be kind, be real…'}
-          placeholderTextColor={MUTED}
-          style={styles.input}
-          returnKeyType="send"
-          onSubmitEditing={addComment}
-        />
-        <TouchableOpacity onPress={addComment} activeOpacity={0.8}>
-          <Text style={{ color: ACCENT, fontWeight: '800' }}>Post</Text>
-        </TouchableOpacity>
-      </View>
+      {/* ===== Feedback Modal ===== */}
+      <Modal
+        visible={feedbackOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setFeedbackOpen(false)}
+      >
+        <Pressable
+          style={styles.modalBackdrop}
+          onPress={() => setFeedbackOpen(false)}
+        >
+          <Pressable style={styles.modalSheet} onPress={() => { }}>
+            <Text style={styles.modalTitle}>Rate this post</Text>
+            <Text style={styles.modalSub}>Your rating helps the community.</Text>
+
+            {/* Star picker */}
+            <View style={styles.starRow}>
+              {Array.from({ length: 5 }).map((_, i) => {
+                const n = i + 1;
+                const active = n <= draftRating;
+                return (
+                  <TouchableOpacity
+                    key={n}
+                    onPress={() => setDraftRating(n)}
+                    activeOpacity={0.75}
+                    style={styles.starTap}
+                  >
+                    <Text style={{ fontSize: 30, color: active ? ACCENT : SOFT }}>
+                      ★
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* Big comment box */}
+            <Text style={[styles.muted, { marginTop: 10, marginBottom: 6 }]}>
+              Write your thoughts
+            </Text>
+            <TextInput
+              value={draftText}
+              onChangeText={setDraftText}
+              placeholder="What do you think? Be honest, be respectful…"
+              placeholderTextColor={MUTED}
+              multiline
+              style={styles.modalInput}
+            />
+
+            {/* Actions */}
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                onPress={() => setFeedbackOpen(false)}
+                activeOpacity={0.8}
+                style={[styles.modalBtn, styles.modalBtnGhost]}
+              >
+                <Text style={[styles.modalBtnText, { color: INK }]}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={submitFeedback}
+                activeOpacity={0.85}
+                style={[styles.modalBtn, styles.modalBtnPrimary]}
+              >
+                <Text style={[styles.modalBtnText, { color: '#fff' }]}>Post</Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
-
 
 /* =============== Media Carousel + Fullscreen Viewer =============== */
 function MediaCarousel({ media }: { media: MediaItem[] }) {
@@ -763,10 +905,7 @@ function MediaCarousel({ media }: { media: MediaItem[] }) {
           <View style={styles.dotsBottomCenter}>
             <View style={{ flexDirection: 'row', gap: 6 }}>
               {media.map((_, i) => (
-                <View
-                  key={i}
-                  style={[styles.dot, i === index && styles.dotActive]}
-                />
+                <View key={i} style={[styles.dot, i === index && styles.dotActive]} />
               ))}
             </View>
           </View>
@@ -845,31 +984,22 @@ function SmartVideo({ uri, playing }: { uri: string; playing: boolean }) {
 
 /* ================== Styles ================== */
 const styles = StyleSheet.create({
-  gradient: {
-    flex: 1,
-  },
-  container: {
-    flex: 1,
-  },
+  gradient: { flex: 1 },
+  container: { flex: 1 },
 
   // Top section (title + composer)
   statusBar: {
     marginHorizontal: 12,
     marginTop: 12,
     marginBottom: 8,
-
     paddingHorizontal: 14,
     paddingVertical: 12,
-
     borderRadius: 20,
-
-    // frosted glass effect (fake blur)
     backgroundColor: 'rgba(255,255,255,0.82)',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.65)',
-
     shadowColor: '#000',
-    shadowOpacity: 0.10,
+    shadowOpacity: 0.1,
     shadowRadius: 18,
     shadowOffset: { width: 0, height: 10 },
   },
@@ -877,13 +1007,13 @@ const styles = StyleSheet.create({
   statusTitle: { fontWeight: '800', color: INK, fontSize: 16 },
   statusSub: { color: MUTED, marginTop: 4, fontSize: 13 },
 
-  // New status composer
+  // Status composer
   postBox: {
     marginTop: 10,
     borderWidth: 1,
     borderColor: 'rgb(0, 0, 0)',
     backgroundColor: 'rgba(255,255,255,0.95)',
-    borderRadius: 999, // pill shape
+    borderRadius: 999,
     paddingHorizontal: 14,
     paddingVertical: 8,
     flexDirection: 'row',
@@ -893,7 +1023,6 @@ const styles = StyleSheet.create({
   postInput: { flex: 1, color: INK, paddingVertical: 4 },
   counter: { fontSize: 12, minWidth: 28, textAlign: 'right' },
 
-  // solid royal blue Post button
   postBtn: {
     backgroundColor: ACCENT,
     borderRadius: 999,
@@ -914,6 +1043,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 12 },
     elevation: 3,
   },
+
   row: { flexDirection: 'row', alignItems: 'center' },
   rowBetween: {
     flexDirection: 'row',
@@ -1019,9 +1149,71 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   viewerImage: { width: '100%', height: '100%' },
+
+  // ===== Modal (Rate + Comment) =====
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    justifyContent: 'flex-end',
+  },
+  modalSheet: {
+    backgroundColor: 'rgba(255,255,255,0.92)',
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    paddingHorizontal: 14,
+    paddingTop: 14,
+    paddingBottom: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.10)',
+  },
+  modalTitle: { fontSize: 18, fontWeight: '900', color: INK },
+  modalSub: { marginTop: 4, color: MUTED, fontSize: 13 },
+
+  starRow: {
+    flexDirection: 'row',
+    marginTop: 10,
+    alignItems: 'center',
+  },
+  starTap: {
+    paddingVertical: 6,
+    paddingHorizontal: 6,
+  },
+
+  modalInput: {
+    minHeight: 120,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.12)',
+    backgroundColor: 'rgba(255,255,255,0.95)',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: INK,
+    textAlignVertical: 'top',
+  },
+  modalActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 12,
+  },
+  modalBtn: {
+    flex: 1,
+    borderRadius: 14,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalBtnGhost: {
+    backgroundColor: 'rgba(0,0,0,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.10)',
+  },
+  modalBtnPrimary: {
+    backgroundColor: ACCENT,
+  },
+  modalBtnText: { fontWeight: '900', fontSize: 14 },
 });
 
-/* =============== timeline page  =============== */
 
+/* =============== timeline page  =============== */
 
 

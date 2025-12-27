@@ -98,9 +98,9 @@ export default function ProfileScreen() {
 
             {/* Grid */}
             {loading ? (
-                <Text style={{ textAlign: 'center', marginTop: 20 }}>Loading…</Text>
+                <Text style={{ textAlign: 'center', marginTop: 20, color: '#9AA0A6' }}>Loading…</Text>
             ) : reviews.length === 0 ? (
-                <Text style={{ textAlign: 'center', marginTop: 20, color: '#999' }}>No reviews posted yet.</Text>
+                <Text style={{ textAlign: 'center', marginTop: 20, color: '#9AA0A6' }}>No reviews posted yet.</Text>
             ) : (
                 <FlatList
                     data={reviews.filter((r) => r.media?.[0]?.url)}
@@ -118,7 +118,7 @@ export default function ProfileScreen() {
 }
 
 const styles = StyleSheet.create({
-    container: { backgroundColor: '#fff' },
+    container: { backgroundColor: '#000000' },
     header: {
         paddingTop: 40,
         paddingHorizontal: 20,
@@ -127,19 +127,18 @@ const styles = StyleSheet.create({
     },
     avatar: { width: 90, height: 90, borderRadius: 50, marginBottom: 12 },
     headerInfo: { flex: 1, alignItems: 'center' },
-    username: { fontWeight: '800', fontSize: 20, marginBottom: 6 },
-    bio: { fontSize: 14, color: '#444', textAlign: 'center' },
-    location: { fontSize: 13, color: '#888', marginTop: 4 },
-    reviewsCount: { fontSize: 14, color: '#333', marginTop: 10 },
+    username: { fontWeight: '800', fontSize: 20, marginBottom: 6, color: '#FFFFFF' },
+    bio: { fontSize: 14, color: '#B3B3B3', textAlign: 'center' },
+    location: { fontSize: 13, color: '#9AA0A6', marginTop: 4 },
+    reviewsCount: { fontSize: 14, color: '#D0D0D0', marginTop: 10 },
     buttonsRow: { flexDirection: 'row', marginTop: 12 },
-    button: { backgroundColor: '#000', paddingVertical: 8, paddingHorizontal: 16, borderRadius: 6, marginRight: 8 },
-    buttonText: { color: '#fff', fontWeight: '600', fontSize: 14 },
-    buttonOutline: { borderColor: '#000', borderWidth: 1.5, paddingVertical: 8, paddingHorizontal: 16, borderRadius: 6 },
-    buttonOutlineText: { color: '#000', fontWeight: '600', fontSize: 14 },
+    button: { backgroundColor: '#FFFFFF', paddingVertical: 8, paddingHorizontal: 16, borderRadius: 6, marginRight: 8 },
+    buttonText: { color: '#000000', fontWeight: '600', fontSize: 14 },
+    buttonOutline: { borderColor: '#FFFFFF', borderWidth: 1.5, paddingVertical: 8, paddingHorizontal: 16, borderRadius: 6 },
+    buttonOutlineText: { color: '#FFFFFF', fontWeight: '600', fontSize: 14 },
 
-    divider: { height: 1, backgroundColor: '#eee', marginVertical: 20 },
+    divider: { height: 1, backgroundColor: '#1F1F1F', marginVertical: 20 },
 
     gridContainer: { paddingHorizontal: 1 },
     gridImage: { width: screenWidth / 3 - 2, height: screenWidth / 3 - 2, margin: 1 },
 });
-

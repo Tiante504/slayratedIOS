@@ -28,11 +28,11 @@ import { getDownloadURL, getStorage, ref, uploadBytes } from 'firebase/storage';
 type PickedMedia = { uri: string; mime: string; type: 'image' | 'video'; durationSec?: number };
 
 const ACCENT = '#6E56CF';
-const ACCENT_SOFT = '#edeafc';
-const INK = '#0E0E0E';
-const MUTED = '#6B6B6B';
-const CARD = '#ffffff';
-const BG = '#f7f6fb';
+const ACCENT_SOFT = '#2A1C4D';
+const INK = '#F5F5F5';
+const MUTED = '#9AA0A6';
+const CARD = '#0F0F0F';
+const BG = '#000000';
 const SERVICES = ['nails', 'hair', 'brows', 'makeup'] as const;
 
 const MAX_VIDEO_SEC = 120; // 2 minutes
@@ -440,8 +440,8 @@ const styles = StyleSheet.create({
   input: {
     marginTop: 8,
     borderWidth: 1,
-    borderColor: '#e6dffa',
-    backgroundColor: '#fbfaff',
+    borderColor: '#2B2B2B',
+    backgroundColor: '#141414',
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 10,
@@ -449,7 +449,7 @@ const styles = StyleSheet.create({
   },
   helper: { marginTop: 8, color: MUTED, fontSize: 12 },
 
-  chip: { borderWidth: 1, borderColor: '#d8d2ee', backgroundColor: '#fff', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999 },
+  chip: { borderWidth: 1, borderColor: '#2B2B2B', backgroundColor: '#141414', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999 },
   chipText: { color: INK, fontWeight: '700' },
 
   imagePreview: { width: 110, height: 110, borderRadius: 12 },
@@ -477,16 +477,16 @@ const styles = StyleSheet.create({
     marginTop: 10,
     height: 140,
     borderRadius: 12,
-    backgroundColor: '#f0ecff',
+    backgroundColor: '#141414',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#e6dffa',
+    borderColor: '#2B2B2B',
   },
 
   primaryBtn: { backgroundColor: ACCENT, paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10 },
   primaryBtnText: { color: '#fff', fontWeight: '700' },
-  ghostBtn: { borderWidth: 1, borderColor: INK, paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10, backgroundColor: '#fff' },
+  ghostBtn: { borderWidth: 1, borderColor: INK, paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10, backgroundColor: '#141414' },
   ghostBtnText: { color: INK, fontWeight: '700' },
 
   postBar: {
@@ -496,9 +496,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     backgroundColor: BG,
     borderTopWidth: 1,
-    borderTopColor: '#eee1f0',
+    borderTopColor: '#1F1F1F',
   },
   postBtn: { backgroundColor: ACCENT, paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
   postBtnText: { color: '#fff', fontWeight: '800' },
 });
-

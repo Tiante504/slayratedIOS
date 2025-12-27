@@ -189,9 +189,11 @@ export default function UserProfileScreen() {
 
       {/* Reviews Grid */}
       {loading ? (
-        <Text style={{ textAlign: 'center', marginTop: 16 }}>Loading…</Text>
+        <Text style={{ textAlign: 'center', marginTop: 16, color: '#9AA0A6' }}>
+          Loading…
+        </Text>
       ) : reviews.length === 0 ? (
-        <Text style={{ textAlign: 'center', color: '#888', marginTop: 20 }}>
+        <Text style={{ textAlign: 'center', color: '#9AA0A6', marginTop: 20 }}>
           No reviews yet.
         </Text>
       ) : (
@@ -212,7 +214,7 @@ export default function UserProfileScreen() {
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: '#fff',
+    backgroundColor: '#000000',
   },
   header: {
     paddingTop: 40,
@@ -233,14 +235,15 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontSize: 20,
     marginBottom: 6,
+    color: '#FFFFFF',
   },
   bio: {
     fontSize: 14,
-    color: '#444',
+    color: '#B3B3B3',
   },
   location: {
     fontSize: 13,
-    color: '#888',
+    color: '#9AA0A6',
     marginTop: 4,
   },
   stats: {
@@ -248,7 +251,7 @@ const styles = StyleSheet.create({
   },
   stat: {
     fontSize: 14,
-    color: '#333',
+    color: '#D0D0D0',
   },
   bold: {
     fontWeight: 'bold',
@@ -258,32 +261,32 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   button: {
-    backgroundColor: '#000',
+    backgroundColor: '#FFFFFF',
     paddingVertical: 8,
     paddingHorizontal: 16,
     borderRadius: 6,
     marginRight: 8,
   },
   buttonText: {
-    color: '#fff',
+    color: '#000000',
     fontWeight: '600',
     fontSize: 14,
   },
   buttonOutline: {
-    borderColor: '#000',
+    borderColor: '#FFFFFF',
     borderWidth: 1.5,
     paddingVertical: 8,
     paddingHorizontal: 16,
     borderRadius: 6,
   },
   buttonOutlineText: {
-    color: '#000',
+    color: '#FFFFFF',
     fontWeight: '600',
     fontSize: 14,
   },
   divider: {
     height: 1,
-    backgroundColor: '#eee',
+    backgroundColor: '#1F1F1F',
     marginVertical: 20,
   },
   gridContainer: {
